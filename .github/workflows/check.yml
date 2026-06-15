@@ -1,0 +1,104 @@
+name: Build TestSound
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build-espidf:
+    name: Build TestSound Firmware
+    runs-on: ubuntu-latest
+    container: espressif/idf:release-v5.4
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+
+      - name: Build TestSound
+        shell: bash
+        run: |
+          # Source the IDF environment variables
+          . /opt/esp/idf/export.sh
+          
+          # Fix the git dubious ownership warning so versioning works cleanly
+          git config --global --add safe.directory "*"
+          
+          # Create a flat output directory
+          mkdir -p "$GITHUB_WORKSPACE/build_out"
+          
+          # Auto-detect where the ESP-IDF project directory is located
+          if [ -f "CMakeLists.txt" ]; then
+            proj_dir="."
+          elif [ -d "Smartwatch_OS" ] && [ -f "Smartwatch_OS/CMakeLists.txt" ]; then
+            proj_dir="Smartwatch_OS"
+          elif [ -d "TestSound" ] && [ -f "TestSound/CMakeLists.txt" ]; then
+            proj_dir="TestSound"
+          elif [ -d "testsound" ] && [ -f "testsound/CMakeLists.txt" ]; then
+            proj_dir="testsound"
+          else
+            echo "Error: Could not find any directory containing CMakeLists.txt!"
+            exit 1
+          fi
+          
+          # Extract the project name dynamically from CMakeLists.txt
+          proj_name=$(grep -i '^project(' "$proj_dir/CMakeLists.txt" | sed 's/project(//i' | sed 's/)//' | xargs)
+          if [ -z "$proj_name" ]; then
+            proj_name="Smartwatch_OS"
+          fi
+          
+          echo "=========================================="
+          echo "Target Directory: $proj_dir"
+          echo "Detected Project: $proj_name"
+          echo "=========================================="
+          
+          cd "$proj_dir"
+          
+          # Auto-repair spaces to equals signs in sdkconfig.defaults (fixes ignored PMU pins)
+          if [ -f "sdkconfig.defaults" ]; then
+              echo "Auto-repairing sdkconfig.defaults format..."
+              sed -i 's/CONFIG_\([A-Za-z0-9_]*\) \([-0-9A-Za-z_]*\)/CONFIG_\1=\2/g' sdkconfig.defaults
+          fi
+          
+          # Set the target chip to ESP32-S3 (This runs CMake)
+          idf.py set-target esp32s3
+          
+          # Compile the project
+          idf.py build
+          
+          # Copy the compiled binaries directly to build_out/
+          cp "build/bootloader/bootloader.bin" "$GITHUB_WORKSPACE/build_out/" 2>/dev/null || true
+          cp "build/partition_table/partition-table.bin" "$GITHUB_WORKSPACE/build_out/partition-table.bin" 2>/dev/null || true
+          cp "build/partition_table/partition-table.bin" "$GITHUB_WORKSPACE/build_out/partitions.bin" 2>/dev/null || true
+          
+          # Find and copy only the main app binary in the root of the build folder
+          find "build" -maxdepth 1 -name "*.bin" -exec cp {} "$GITHUB_WORKSPACE/build_out/" \;
+          
+          # Generate the Web Flasher Manifest dynamically matching the compiled app binary
+          echo "Generating Web Flasher manifest.json..."
+          cat <<EOF > "$GITHUB_WORKSPACE/build_out/manifest.json"
+          {
+            "name": "$proj_name",
+            "version": "1.0.0",
+            "builds": [
+              {
+                "chipFamily": "ESP32-S3",
+                "parts": [
+                  { "path": "bootloader.bin", "offset": 0 },
+                  { "path": "partitions.bin", "offset": 32768 },
+                  { "path": "${proj_name}.bin", "offset": 65536 }
+                ]
+              }
+            ]
+          }
+          EOF
+          
+      - name: Upload ESP-IDF Compiled Binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: testsound-binaries
+          path: build_out/
