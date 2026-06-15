@@ -106,7 +106,7 @@ esp_err_t enable_axp2101_audio_power(void)
         ESP_LOGE(TAG, "Failed to read Reg 0x90");
     }
 
-    i2c_master_bus_remove_device(pmu_dev);
+    i2c_master_bus_rm_device(pmu_dev); // Corrected API call name
     return ret;
 }
 
@@ -123,8 +123,8 @@ esp_err_t i2s_init(void)
             .mclk = GPIO_NUM_16,
             .bclk = GPIO_NUM_41,
             .ws = GPIO_NUM_45,
-            .dout = GPIO_NUM_42, // Corrected: Sends audio data to ES8311 DAC
-            .din = GPIO_NUM_40,  // Corrected: Receives audio data from Microphone
+            .dout = GPIO_NUM_42, // Sends output data to ES8311 DAC
+            .din = GPIO_NUM_40,  // Receives input data from ES7210 Mic
             .invert_flags = {
                 .mclk_inv = false,
                 .bclk_inv = false,
