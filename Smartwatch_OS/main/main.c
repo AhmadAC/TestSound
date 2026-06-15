@@ -47,7 +47,9 @@ void init_pa_power(void)
         .intr_type = GPIO_INTR_DISABLE,
     };
     gpio_config(&io_conf);
+    // NS4150B Amplifier CTRL pin is Active High
     gpio_set_level(PA_ENABLE_GPIO, 1);
+    ESP_LOGI(TAG, "Audio PA (Amplifier) Enabled on GPIO %d", PA_ENABLE_GPIO);
 }
 
 esp_err_t i2c_master_init(void)
@@ -88,8 +90,8 @@ esp_err_t enable_axp2101_audio_power(void)
         ESP_LOGE(TAG, "Failed to set ALDO3 voltage");
     }
 
-    // Set LDOs ON/OFF control (Register 0x90) to 0xBF to fully enable all required power rails
-    uint8_t write_en[2] = {0x90, 0xBF};
+    // Set LDOs ON/OFF control (Register 0x90) to 0xFF to fully enable ALL required power rails (guarantees ALDO2/3 stay up)
+    uint8_t write_en[2] = {0x90, 0xFF};
     ret = i2c_master_transmit(pmu_dev, write_en, sizeof(write_en), 1000);
     if (ret == ESP_OK) {
         ESP_LOGI(TAG, "AXP2101 LDO rails (including ALDO3 Codec Power) enabled successfully");
@@ -114,8 +116,8 @@ esp_err_t i2s_init(void)
             .mclk = GPIO_NUM_16,
             .bclk = GPIO_NUM_41,
             .ws = GPIO_NUM_45,
-            .dout = GPIO_NUM_42, // Sends output data to ES8311 DAC
-            .din = GPIO_NUM_40,  // Receives input data from ES7210 Mic
+            .dout = GPIO_NUM_40, // CORRECTED: GPIO40 routes to I2S_DSDIN (ES8311 DAC Input)
+            .din = GPIO_NUM_42,  // CORRECTED: GPIO42 routes to I2S_ASDOUT (ES8311 ADC Output)
             .invert_flags = {
                 .mclk_inv = false,
                 .bclk_inv = false,
@@ -187,6 +189,7 @@ void play_startup_chime(void)
     play_sine_tone(659, 200); // E5
     vTaskDelay(pdMS_TO_TICKS(50));
     play_sine_tone(784, 400); // G5
+    ESP_LOGI(TAG, "Startup chime finished.");
 }
 
 #define EXAMPLE_RECV_BUF_SIZE (4096)
@@ -252,7 +255,7 @@ void app_main(void)
         ESP_LOGE(TAG, "I2S initialization failed: %s", esp_err_to_name(ret));
         return;
     }
-    ESP_LOGI(TAG, "I2S initialized successfully (BCLK=41, WS=45, DOUT=42, DIN=40, MCLK=16)");
+    ESP_LOGI(TAG, "I2S initialized successfully (BCLK=41, WS=45, DOUT=40, DIN=42, MCLK=16)");
 
     // 5. Initialize ES8311 Audio Codec
     i2c_device_config_t dev_cfg = {
@@ -272,6 +275,9 @@ void app_main(void)
         return;
     }
     ESP_LOGI(TAG, "ES8311 codec initialized successfully");
+
+    // Let the Power Amplifier (PA) fully settle to avoid popping prior to generating the PCM waves
+    vTaskDelay(pdMS_TO_TICKS(100));
 
     // 6. Play startup chime sound to confirm speaker output works flawlessly
     play_startup_chime();
