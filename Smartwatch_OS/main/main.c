@@ -88,25 +88,16 @@ esp_err_t enable_axp2101_audio_power(void)
         ESP_LOGE(TAG, "Failed to set ALDO3 voltage");
     }
 
-    // Read current LDOS ON/OFF control (Register 0x90)
-    uint8_t reg_90_addr = 0x90;
-    uint8_t reg_90_val = 0;
-    ret = i2c_master_transmit_receive(pmu_dev, &reg_90_addr, 1, &reg_90_val, 1, 1000);
+    // Set LDOs ON/OFF control (Register 0x90) to 0xBF to fully enable all required power rails
+    uint8_t write_en[2] = {0x90, 0xBF};
+    ret = i2c_master_transmit(pmu_dev, write_en, sizeof(write_en), 1000);
     if (ret == ESP_OK) {
-        // Enable ALDO3 (Bit 2)
-        reg_90_val |= (1 << 2); 
-        uint8_t write_en[2] = {0x90, reg_90_val};
-        ret = i2c_master_transmit(pmu_dev, write_en, sizeof(write_en), 1000);
-        if (ret == ESP_OK) {
-            ESP_LOGI(TAG, "AXP2101 ALDO3 (Audio Codec Power) enabled successfully");
-        } else {
-            ESP_LOGE(TAG, "Failed to write Reg 0x90 to enable ALDO3");
-        }
+        ESP_LOGI(TAG, "AXP2101 LDO rails (including ALDO3 Codec Power) enabled successfully");
     } else {
-        ESP_LOGE(TAG, "Failed to read Reg 0x90");
+        ESP_LOGE(TAG, "Failed to write Reg 0x90 to enable LDO rails");
     }
 
-    i2c_master_bus_rm_device(pmu_dev); // Corrected API call name
+    i2c_master_bus_rm_device(pmu_dev);
     return ret;
 }
 
@@ -161,6 +152,7 @@ esp_err_t es8311_codec_init(void) {
     
     ESP_RETURN_ON_ERROR(es8311_voice_volume_set(es_handle, EXAMPLE_VOICE_VOLUME, NULL), TAG, "set es8311 volume failed");
     ESP_RETURN_ON_ERROR(es8311_microphone_gain_set(es_handle, EXAMPLE_MIC_GAIN), TAG, "set es8311 microphone gain failed");
+    ESP_RETURN_ON_ERROR(es8311_voice_mute(es_handle, false), TAG, "set es8311 unmute failed"); // Added: Explicitly unmute DAC
     return ESP_OK;
 }
 
@@ -232,6 +224,9 @@ static void audio_echo_task(void *pvParameters)
 
 void app_main(void)
 {
+    // Delay to let the serial terminal on the PC re-enumerate and connect safely before logs are sent
+    vTaskDelay(pdMS_TO_TICKS(2000));
+
     ESP_LOGI(TAG, "Initializing Smartwatch Audio OS...");
 
     // 1. Initialize power management/enable pins
