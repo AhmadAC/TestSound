@@ -49,46 +49,83 @@ void battery_monitor_task(void *pvParameters)
 
     uint8_t val = 0;
     
-    // Enable Fuel Gauge Module (Reg 0x18, Bit 3)
+    // 1. Enable Battery Detection (Reg 0x68, Bit 0)
+    if (pmu_read_reg(0x68, &val) == ESP_OK) {
+        val |= 0x01; // Enable battery detection
+        pmu_write_reg(0x68, val);
+        ESP_LOGI(TAG, "Battery detection configured: 0x%02X", val);
+    } else {
+        ESP_LOGE(TAG, "Failed to communicate with AXP2101 (Reg 0x68)");
+    }
+
+    // 2. Enable Fuel Gauge Module & Charger (Reg 0x18, Bit 3 and Bit 1)
     if (pmu_read_reg(0x18, &val) == ESP_OK) {
-        val |= (1 << 3); 
+        val |= (1 << 3) | (1 << 1); 
         pmu_write_reg(0x18, val);
+        ESP_LOGI(TAG, "Fuel Gauge & Charger configured: 0x%02X", val);
     } else {
         ESP_LOGW(TAG, "Failed to communicate with AXP2101 (Reg 0x18)");
     }
     
-    // Enable Battery Voltage Measure ADC Channel (Reg 0x30, Bit 0)
-    if (pmu_read_reg(0x30, &val) == ESP_OK) {
-        val |= (1 << 0); 
-        pmu_write_reg(0x30, val);
+    // 3. Enable All ADC Channels (Reg 0x30)
+    // Writing 0x3F enables VBAT, VBUS, VSYS, TS, Die Temp, and Current ADCs.
+    // The Fuel Gauge requires these to calculate Coulomb counting and temperature adjustments.
+    if (pmu_write_reg(0x30, 0x3F) == ESP_OK) {
+        ESP_LOGI(TAG, "All ADC Channels successfully enabled (Reg 0x30 = 0x3F)");
     } else {
         ESP_LOGW(TAG, "Failed to communicate with AXP2101 (Reg 0x30)");
     }
 
     while (1) {
+        uint8_t status1 = 0;
+        uint8_t status2 = 0;
+        uint8_t reg18 = 0;
+        uint8_t reg30 = 0;
+        uint8_t reg68 = 0;
         uint8_t percent = 0;
-        uint8_t vbat_h = 0, vbat_l = 0;
+        uint8_t vbat_h = 0;
+        uint8_t vbat_l = 0;
+        
+        // Read diagnostic status registers
+        pmu_read_reg(0x00, &status1);
+        pmu_read_reg(0x01, &status2);
+        pmu_read_reg(0x18, &reg18);
+        pmu_read_reg(0x30, &reg30);
+        pmu_read_reg(0x68, &reg68);
         
         // Read Fuel Gauge Percentage (Reg 0xA4)
-        esp_err_t ret = pmu_read_reg(0xA4, &percent);
+        esp_err_t ret_pct = pmu_read_reg(0xA4, &percent);
         
         // Read 14-Bit ADC Battery Voltage (Reg 0x34 & 0x35)
-        pmu_read_reg(0x34, &vbat_h);
-        pmu_read_reg(0x35, &vbat_l);
+        esp_err_t ret_v_h = pmu_read_reg(0x34, &vbat_h);
+        esp_err_t ret_v_l = pmu_read_reg(0x35, &vbat_l);
         
-        if (ret == ESP_OK) {
-            // Reconstruct the 14-bit voltage (1mV per step)
-            uint16_t vbat_mv = ((vbat_h & 0x3F) << 8) | vbat_l;
+        bool present = (status1 & (1 << 3)) != 0;
+        bool charging = (status2 & 0x07) == 1 || (status2 & 0x07) == 2 || (status2 & 0x07) == 3;
+        
+        ESP_LOGI(TAG, "--- PMU DIAGNOSTIC DUMP ---");
+        ESP_LOGI(TAG, "Reg 0x00 (Status1)  : 0x%02X [BatPresent=%d]", status1, present);
+        ESP_LOGI(TAG, "Reg 0x01 (Status2)  : 0x%02X [Charging=%d]", status2, charging);
+        ESP_LOGI(TAG, "Reg 0x18 (GaugeCtrl): 0x%02X", reg18);
+        ESP_LOGI(TAG, "Reg 0x30 (ADCCtrl)  : 0x%02X", reg30);
+        ESP_LOGI(TAG, "Reg 0x68 (BatDet)   : 0x%02X", reg68);
+        ESP_LOGI(TAG, "Reg 0x34/35 (RawV)  : 0x%02X / 0x%02X", vbat_h, vbat_l);
+        ESP_LOGI(TAG, "Reg 0xA4 (Percent)  : 0x%02X (%d%%)", percent, percent);
+
+        if (ret_pct == ESP_OK && ret_v_h == ESP_OK && ret_v_l == ESP_OK) {
+            // Reconstruct the 14-bit voltage (typically 1mV per step on standard AXP2101)
+            uint16_t vbat_raw = ((vbat_h & 0x3F) << 8) | vbat_l;
+            uint16_t vbat_mv = vbat_raw;
             
-            // Safety cap if percentage goes weirdly out of bounds
+            // Safety cap percentage
             if (percent > 100) percent = 100;
             
-            ESP_LOGI(TAG, "Battery: %d%% (%d mV)", percent, vbat_mv);
+            ESP_LOGI(TAG, "Calculated State -> Battery: %d%% (%d mV) [Raw: %d]", percent, vbat_mv, vbat_raw);
         } else {
-            ESP_LOGW(TAG, "Failed to read battery data: %s", esp_err_to_name(ret));
+            ESP_LOGW(TAG, "Failed to read data registers over I2C!");
         }
 
-        // Check battery every 5 seconds
+        // Poll battery metrics every 5 seconds
         vTaskDelay(pdMS_TO_TICKS(5000));
     }
 }
