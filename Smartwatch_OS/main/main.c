@@ -1,3 +1,4 @@
+// File: Smartwatch_OS/main/main.c
 /*
  * Smartwatch OS Battery Monitor Implementation
  * Directly interfaces with the AXP2101 PMU over I2C
@@ -160,6 +161,7 @@ void app_main(void)
         
         esp_err_t ret = i2c_master_bus_add_device(bsp_bus, &pmu_cfg, &pmu_dev_handle);
         if (ret == ESP_OK) {
+            // Re-assign the PMU device handle to make sure reads can start
             ESP_LOGI(TAG, "AXP2101 registered successfully on shared BSP I2C bus");
         } else {
             ESP_LOGE(TAG, "Failed to register AXP2101 on shared bus: %s", esp_err_to_name(ret));

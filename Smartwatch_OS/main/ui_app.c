@@ -186,42 +186,44 @@ static void btn_ap_mode_cb(lv_event_t * e) {
 
 // Function to create a beautifully aligned visual battery widget
 static void create_battery_widget(lv_obj_t * parent, lv_obj_t ** out_cnt, lv_obj_t ** out_fill, lv_obj_t ** out_label) {
-    // Root row container
+    // Root Row Container
     *out_cnt = lv_obj_create(parent);
-    lv_obj_remove_style_all(*out_cnt);
-    lv_obj_set_size(*out_cnt, 240, 40);
+    lv_obj_set_size(*out_cnt, 240, 45);
     lv_obj_align(*out_cnt, LV_ALIGN_TOP_MID, 0, 15);
+    lv_obj_set_style_bg_opa(*out_cnt, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(*out_cnt, 0, 0);
+    lv_obj_set_style_pad_all(*out_cnt, 0, 0);
     lv_obj_set_flex_flow(*out_cnt, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(*out_cnt, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(*out_cnt, 8, 0);
 
-    // Battery Body border
+    // Battery Body Border Frame
     lv_obj_t * body = lv_obj_create(*out_cnt);
-    lv_obj_remove_style_all(body);
     lv_obj_set_size(body, 35, 18);
+    lv_obj_set_style_bg_opa(body, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_color(body, lv_color_white(), 0);
     lv_obj_set_style_border_width(body, 2, 0);
     lv_obj_set_style_radius(body, 3, 0);
     lv_obj_set_style_pad_all(body, 2, 0);
 
-    // Dynamic Fill bar (Max width is 27px based on padding & border limits)
+    // Dynamic Fill Bar (Maximum physical bounds fit 27px based on outline pads)
     *out_fill = lv_obj_create(body);
-    lv_obj_remove_style_all(*out_fill);
     lv_obj_set_size(*out_fill, 27, 10);
     lv_obj_set_style_radius(*out_fill, 1, 0);
     lv_obj_set_style_bg_opa(*out_fill, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(*out_fill, 0, 0);
     lv_obj_align(*out_fill, LV_ALIGN_LEFT_MID, 0, 0);
 
-    // Positive terminal tip
+    // Battery positive node tip
     lv_obj_t * tip = lv_obj_create(*out_cnt);
-    lv_obj_remove_style_all(tip);
     lv_obj_set_size(tip, 3, 8);
     lv_obj_set_style_bg_color(tip, lv_color_white(), 0);
     lv_obj_set_style_bg_opa(tip, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(tip, 0, 0);
     lv_obj_set_style_radius(tip, 1, 0);
-    lv_obj_set_style_margin_left(tip, -5, 0); // Nestles flush against the right side of the frame
+    lv_obj_set_style_margin_left(tip, -5, 0); // Fits flush against the battery body edge
 
-    // Numeric and status text label
+    // Text status display
     *out_label = lv_label_create(*out_cnt);
     lv_obj_set_style_text_color(*out_label, lv_color_white(), 0);
     lv_obj_set_style_text_font(*out_label, &lv_font_montserrat_16, 0);
