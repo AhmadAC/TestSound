@@ -45,23 +45,25 @@ void battery_monitor_task(void *pvParameters)
 
     uint8_t val = 0;
     
-    // 1. Enable Battery Detection (Reg 0x68, Bit 0)
+    // 1. Disable TS (Thermistor) Pin charging protection
+    // By setting Reg 0x50 Bit 4 to 1, we tell the PMU to ignore the missing thermistor
+    if (pmu_read_reg(0x50, &val) == ESP_OK) {
+        pmu_write_reg(0x50, val | 0x10);
+    }
+
+    // 2. Enable Battery Detection (Reg 0x68, Bit 0)
     if (pmu_read_reg(0x68, &val) == ESP_OK) {
         pmu_write_reg(0x68, val | 0x01);
     }
 
-    // 2. Enable Fuel Gauge Module & Charger (Reg 0x18, Bit 3 and Bit 1)
+    // 3. Enable Fuel Gauge Module & Charger (Reg 0x18, Bit 3 and Bit 1)
     if (pmu_read_reg(0x18, &val) == ESP_OK) {
         pmu_write_reg(0x18, val | 0x0A); 
     }
     
-    // 3. Enable ADC Channels for VBAT, VBUS, VSYS (Reg 0x30, Bits 0, 1, 2)
-    // CRITICAL: We MUST disable the TS (Temperature Sensor) pin (Bits 3/4) 
-    // otherwise the PMU faults and stops charging/reading because the board lacks a thermistor.
-    if (pmu_read_reg(0x30, &val) == ESP_OK) {
-        // Keep highest bits, clear the middle (TS/GPADC), and set bottom 3 for voltage ADCs
-        pmu_write_reg(0x30, (val & 0xC0) | 0x07); 
-    }
+    // 4. Enable Master ADC Engine + VBAT & VBUS ADCs (Reg 0x30)
+    // Bit 5 = Master ADC Enable, Bit 2 = VBUS ADC, Bit 0 = Battery ADC (0x25 = 0010 0101)
+    pmu_write_reg(0x30, 0x25);
 
     while (1) {
         uint8_t status1 = 0;
@@ -69,12 +71,22 @@ void battery_monitor_task(void *pvParameters)
         uint8_t vbat_h = 0;
         uint8_t vbat_l = 0;
         
-        pmu_read_reg(0x00, &status1);
+        // Read diagnostic status registers and check for I2C errors
+        esp_err_t err = pmu_read_reg(0x00, &status1);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "I2C read failed: %s. Retrying...", esp_err_to_name(err));
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
+        // Read Fuel Gauge Percentage (Reg 0xA4)
         pmu_read_reg(0xA4, &percent);
+        
+        // Read 14-Bit ADC Battery Voltage (Reg 0x34 & 0x35)
         pmu_read_reg(0x34, &vbat_h);
         pmu_read_reg(0x35, &vbat_l);
         
-        // Reconstruct the 14-bit voltage (1mV per step on AXP2101)
+        // Reconstruct the 14-bit voltage (1mV per LSB step on AXP2101)
         uint16_t vbat_raw = ((vbat_h & 0x3F) << 8) | vbat_l;
         float voltage = (float)vbat_raw / 1000.0f;
         
@@ -94,7 +106,10 @@ void battery_monitor_task(void *pvParameters)
         }
 
         // Trust the raw ADC: If the voltage is above 2.0V, the battery is physically connected.
-        battery_present = (battery_voltage > 2.0f);
+        battery_present = (status1 & (1 << 3)) != 0;
+        if (!battery_present && battery_voltage > 2.0f) {
+            battery_present = true;
+        }
         
         // Charging logic maps to USB presence
         battery_charging = vbus_good;
@@ -128,7 +143,7 @@ void app_main(void)
         i2c_device_config_t pmu_cfg = {
             .dev_addr_length = I2C_ADDR_BIT_LEN_7,
             .device_address = AXP2101_ADDR,
-            .scl_speed_hz = 100000,
+            .scl_speed_hz = 400000, // Safe matching speed for displays
         };
         
         esp_err_t ret = i2c_master_bus_add_device(bsp_bus, &pmu_cfg, &pmu_dev_handle);
