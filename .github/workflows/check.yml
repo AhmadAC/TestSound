@@ -2,9 +2,9 @@ name: Build TestSound
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "battery", "master" ]
   pull_request:
-    branches: [ "main", "master" ]
+    branches: [ "battery", "master" ]
   workflow_dispatch:
 
 jobs:
