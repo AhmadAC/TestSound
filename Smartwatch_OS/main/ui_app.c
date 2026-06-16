@@ -1,6 +1,6 @@
 // File: Smartwatch_OS/main/ui_app.c
 #include "ui_app.h"
-#include "lvgl/lvgl.h"
+#include "lvgl.h"
 #include "bsp/esp-bsp.h"
 #include "esp_log.h"
 #include <stdio.h>
@@ -138,11 +138,4 @@ void build_ui(void) {
     lv_obj_set_style_text_font(lbl_percentage, &lv_font_montserrat_40, 0);
 
     // 5. Voltage and Status Description Text
-    lbl_status = lv_label_create(battery_card);
-    lv_label_set_text(lbl_status, "Reading...");
-    lv_obj_set_style_text_color(lbl_status, lv_color_make(180, 180, 180), 0);
-    lv_obj_set_style_text_font(lbl_status, &lv_font_montserrat_18, 0);
-
-    // Update screen graphics every 250ms
-    lv_timer_create(ui_update_timer_cb, 250, NULL);
-}
+    lbl_status = lv

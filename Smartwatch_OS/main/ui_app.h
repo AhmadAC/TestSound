@@ -2,7 +2,7 @@
 #ifndef UI_APP_H
 #define UI_APP_H
 
-#include "lvgl/lvgl.h"
+#include "lvgl.h"
 
 void build_ui(void);
 
