@@ -22,6 +22,9 @@ static lv_obj_t * battery_fill = NULL;
 static lv_obj_t * lbl_percentage = NULL;
 static lv_obj_t * lbl_status = NULL;
 
+// Declare the default font that we know is compiled in
+LV_FONT_DECLARE(lv_font_montserrat_14);
+
 static void ui_update_timer_cb(lv_timer_t * timer) {
     if (!battery_present) {
         lv_obj_set_width(battery_fill, 0);
@@ -61,9 +64,9 @@ static void ui_update_timer_cb(lv_timer_t * timer) {
     // Update description text
     char status_str[64];
     if (battery_charging) {
-        snprintf(status_str, sizeof(status_str), "%.3f V  •  Charging " LV_SYMBOL_CHARGE, battery_voltage);
+        snprintf(status_str, sizeof(status_str), "%.3f V  -  Charging", battery_voltage);
     } else {
-        snprintf(status_str, sizeof(status_str), "%.3f V  •  Discharging", battery_voltage);
+        snprintf(status_str, sizeof(status_str), "%.3f V  -  Discharging", battery_voltage);
     }
     lv_label_set_text(lbl_status, status_str);
 }
@@ -76,7 +79,7 @@ void build_ui(void) {
     lv_obj_t * lbl_title = lv_label_create(main_screen);
     lv_label_set_text(lbl_title, "SYSTEM MONITOR");
     lv_obj_set_style_text_color(lbl_title, lv_color_make(140, 140, 140), 0);
-    lv_obj_set_style_text_font(lbl_title, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_text_font(lbl_title, &lv_font_montserrat_14, 0);
     lv_obj_align(lbl_title, LV_ALIGN_TOP_MID, 0, 45);
 
     // 2. Centered Status Dashboard Card
@@ -112,7 +115,7 @@ void build_ui(void) {
     lv_obj_set_style_border_color(body, lv_color_white(), 0);
     lv_obj_set_style_border_width(body, 3, 0);
     lv_obj_set_style_radius(body, 8, 0);
-    lv_obj_set_style_pad_all(body, 5, 0); // Spacing between border and fill bar
+    lv_obj_set_style_pad_all(body, 5, 0);
 
     // Battery level fill inside the cell
     battery_fill = lv_obj_create(body);
@@ -129,13 +132,20 @@ void build_ui(void) {
     lv_obj_set_style_bg_opa(battery_tip, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(battery_tip, 0, 0);
     lv_obj_set_style_radius(battery_tip, 3, 0);
-    lv_obj_set_style_margin_left(battery_tip, -3, 0); // Aligns flush against cell outline
+    lv_obj_set_style_margin_left(battery_tip, -3, 0);
 
-    // 4. Large Digital Percentage Text
+    // 4. Digital Percentage Text
     lbl_percentage = lv_label_create(battery_card);
     lv_label_set_text(lbl_percentage, "--%");
     lv_obj_set_style_text_color(lbl_percentage, lv_color_white(), 0);
-    lv_obj_set_style_text_font(lbl_percentage, &lv_font_montserrat_40, 0);
+    lv_obj_set_style_text_font(lbl_percentage, &lv_font_montserrat_14, 0);
 
     // 5. Voltage and Status Description Text
-    lbl_status = lv
+    lbl_status = lv_label_create(battery_card);
+    lv_label_set_text(lbl_status, "Reading...");
+    lv_obj_set_style_text_color(lbl_status, lv_color_make(180, 180, 180), 0);
+    lv_obj_set_style_text_font(lbl_status, &lv_font_montserrat_14, 0);
+
+    // Update screen graphics every 250ms
+    lv_timer_create(ui_update_timer_cb, 250, NULL);
+}
