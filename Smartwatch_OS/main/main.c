@@ -12,33 +12,28 @@
 #include "driver/i2c_master.h"
 #include "esp_log.h"
 #include "esp_err.h"
+#include "bsp/esp-bsp.h"
 
-#define I2C_PORT_NUM    I2C_NUM_0
 #define AXP2101_ADDR    0x34
 
 static const char *TAG = "smartwatch_battery";
 
-static i2c_master_bus_handle_t i2c_bus_handle = NULL;
 static i2c_master_dev_handle_t pmu_dev_handle = NULL;
 
-esp_err_t i2c_master_init(void)
-{
-    i2c_master_bus_config_t bus_config = {
-        .clk_source = I2C_CLK_SRC_DEFAULT,
-        .i2c_port = I2C_PORT_NUM,
-        .scl_io_num = 14,
-        .sda_io_num = 15,
-        .glitch_ignore_cnt = 7,
-        .flags.enable_internal_pullup = true,
-    };
-    return i2c_new_master_bus(&bus_config, &i2c_bus_handle);
-}
+// External function declared in ui_app.c
+extern void build_ui(void);
 
 esp_err_t pmu_read_reg(uint8_t reg_addr, uint8_t *data) {
+    if (pmu_dev_handle == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
     return i2c_master_transmit_receive(pmu_dev_handle, &reg_addr, 1, data, 1, 1000);
 }
 
 esp_err_t pmu_write_reg(uint8_t reg_addr, uint8_t data) {
+    if (pmu_dev_handle == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
     uint8_t buf[2] = {reg_addr, data};
     return i2c_master_transmit(pmu_dev_handle, buf, sizeof(buf), 1000);
 }
@@ -135,29 +130,44 @@ void app_main(void)
     // Delay to let the serial terminal on the PC re-enumerate and connect safely before logs are sent
     vTaskDelay(pdMS_TO_TICKS(2000));
 
-    ESP_LOGI(TAG, "Initializing Smartwatch Battery OS...");
+    ESP_LOGI(TAG, "Initializing Smartwatch OS display and peripherals...");
 
-    esp_err_t ret = i2c_master_init();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "I2C master initialization failed: %s", esp_err_to_name(ret));
-        return;
-    }
-    ESP_LOGI(TAG, "I2C initialized successfully (SDA=15, SCL=14)");
-
-    i2c_device_config_t pmu_cfg = {
-        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-        .device_address = AXP2101_ADDR,
-        .scl_speed_hz = 100000,
-    };
+    // 1. Initialize Board Support Package Display and LVGL Graphics Engine
+    bsp_display_start();
     
-    ret = i2c_master_bus_add_device(i2c_bus_handle, &pmu_cfg, &pmu_dev_handle);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to register AXP2101 device on I2C bus: %s", esp_err_to_name(ret));
-        return;
+    // 2. Power on the display backlight panel
+    bsp_display_backlight_on();
+
+    // 3. Construct user interface widgets, launcher, and tiles
+    build_ui();
+
+    ESP_LOGI(TAG, "Display and UI initialized. Connecting to shared I2C bus...");
+
+    // 4. Retrieve pre-initialized, shared BSP I2C Master Bus Handle
+    i2c_master_bus_handle_t bsp_bus = bsp_i2c_get_handle();
+    if (bsp_bus == NULL) {
+        bsp_i2c_init();
+        bsp_bus = bsp_i2c_get_handle();
     }
 
-    ESP_LOGI(TAG, "AXP2101 registered successfully");
+    if (bsp_bus != NULL) {
+        // Register PMU on the shared bus, avoiding conflicts with displays, RTC, and touch panels
+        i2c_device_config_t pmu_cfg = {
+            .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+            .device_address = AXP2101_ADDR,
+            .scl_speed_hz = 100000,
+        };
+        
+        esp_err_t ret = i2c_master_bus_add_device(bsp_bus, &pmu_cfg, &pmu_dev_handle);
+        if (ret == ESP_OK) {
+            ESP_LOGI(TAG, "AXP2101 registered successfully on shared BSP I2C bus");
+        } else {
+            ESP_LOGE(TAG, "Failed to register AXP2101 on shared bus: %s", esp_err_to_name(ret));
+        }
+    } else {
+        ESP_LOGE(TAG, "Unable to obtain valid BSP I2C Bus handle!");
+    }
 
-    // Create background FreeRTOS task to continuously poll battery
+    // 5. Create background FreeRTOS task to continuously poll battery
     xTaskCreate(battery_monitor_task, "battery_monitor_task", 4096, NULL, 5, NULL);
 }
