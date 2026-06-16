@@ -28,7 +28,7 @@ float battery_voltage = 0.0f;
 bool battery_present = false;
 bool battery_charging = false;
 
-// Multi-byte read helper to prevent AXP2101 ADC buffers from resetting
+// Multi-byte read helper to prevent AXP2101 ADC buffers from resetting or tearing
 esp_err_t pmu_read_regs(uint8_t reg_addr, uint8_t *data, size_t len) {
     if (pmu_dev_handle == NULL) return ESP_ERR_INVALID_STATE;
     return i2c_master_transmit_receive(pmu_dev_handle, &reg_addr, 1, data, len, 1000);
@@ -68,9 +68,9 @@ void battery_monitor_task(void *pvParameters)
     pmu_write_reg(0x18, 0x0E);
     vTaskDelay(pdMS_TO_TICKS(10));
 
-    // 5. Enable ALL ADC channels (General, Die Temp, Vsys, Vbus, TS, Battery)
-    // REG 0x30: Set to 0xFF 
-    pmu_write_reg(0x30, 0xFF);
+    // 5. Enable MASTER ADC Engine + VBAT & VBUS ADCs (Reg 0x30)
+    // Bit 5 = Master ADC Enable, Bit 2 = VBUS ADC, Bit 0 = Battery ADC (0x25 = 0010 0101)
+    pmu_write_reg(0x30, 0x25);
     vTaskDelay(pdMS_TO_TICKS(10));
 
     // 6. Disable low frequency sampling mode to force fast ADC updates
