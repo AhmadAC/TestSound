@@ -14,6 +14,7 @@
 #include "esp_log.h"
 #include "esp_err.h"
 #include "bsp/esp-bsp.h"
+#include "ui_app.h"
 
 #define AXP2101_ADDR    0x34
 
@@ -21,8 +22,11 @@ static const char *TAG = "smartwatch_battery";
 
 static i2c_master_dev_handle_t pmu_dev_handle = NULL;
 
-// External function declared in ui_app.c
-extern void build_ui(void);
+// Global metrics used directly by ui_app.c
+float battery_percentage = 0.0f;
+float battery_voltage = 0.0f;
+bool battery_present = false;
+bool battery_charging = false;
 
 esp_err_t pmu_read_reg(uint8_t reg_addr, uint8_t *data) {
     if (pmu_dev_handle == NULL) {
@@ -75,9 +79,6 @@ void battery_monitor_task(void *pvParameters)
     while (1) {
         uint8_t status1 = 0;
         uint8_t status2 = 0;
-        uint8_t reg18 = 0;
-        uint8_t reg30 = 0;
-        uint8_t reg68 = 0;
         uint8_t percent = 0;
         uint8_t vbat_h = 0;
         uint8_t vbat_l = 0;
@@ -85,9 +86,6 @@ void battery_monitor_task(void *pvParameters)
         // Read diagnostic status registers
         pmu_read_reg(0x00, &status1);
         pmu_read_reg(0x01, &status2);
-        pmu_read_reg(0x18, &reg18);
-        pmu_read_reg(0x30, &reg30);
-        pmu_read_reg(0x68, &reg68);
         
         // Read Fuel Gauge Percentage (Reg 0xA4)
         esp_err_t ret_pct = pmu_read_reg(0xA4, &percent);
@@ -99,30 +97,24 @@ void battery_monitor_task(void *pvParameters)
         bool present = (status1 & (1 << 3)) != 0;
         bool charging = (status2 & 0x07) == 1 || (status2 & 0x07) == 2 || (status2 & 0x07) == 3;
         
-        ESP_LOGI(TAG, "--- PMU DIAGNOSTIC DUMP ---");
-        ESP_LOGI(TAG, "Reg 0x00 (Status1)  : 0x%02X [BatPresent=%d]", status1, present);
-        ESP_LOGI(TAG, "Reg 0x01 (Status2)  : 0x%02X [Charging=%d]", status2, charging);
-        ESP_LOGI(TAG, "Reg 0x18 (GaugeCtrl): 0x%02X", reg18);
-        ESP_LOGI(TAG, "Reg 0x30 (ADCCtrl)  : 0x%02X", reg30);
-        ESP_LOGI(TAG, "Reg 0x68 (BatDet)   : 0x%02X", reg68);
-        ESP_LOGI(TAG, "Reg 0x34/35 (RawV)  : 0x%02X / 0x%02X", vbat_h, vbat_l);
-        ESP_LOGI(TAG, "Reg 0xA4 (Percent)  : 0x%02X (%d%%)", percent, percent);
-
         if (ret_pct == ESP_OK && ret_v_h == ESP_OK && ret_v_l == ESP_OK) {
             // Reconstruct the 14-bit voltage (typically 1mV per step on standard AXP2101)
             uint16_t vbat_raw = ((vbat_h & 0x3F) << 8) | vbat_l;
-            uint16_t vbat_mv = vbat_raw;
             
-            // Safety cap percentage
-            if (percent > 100) percent = 100;
+            // Assign metrics to globally visible variables
+            battery_percentage = (percent > 100) ? 100.0f : (float)percent;
+            battery_voltage = (float)vbat_raw / 1000.0f;
+            battery_present = present;
+            battery_charging = charging;
             
-            ESP_LOGI(TAG, "Calculated State -> Battery: %d%% (%d mV) [Raw: %d]", percent, vbat_mv, vbat_raw);
+            ESP_LOGI(TAG, "Battery metrics updated -> %d%% (%.3f V) [Present: %d, Charging: %d]", 
+                     (int)battery_percentage, battery_voltage, battery_present, battery_charging);
         } else {
             ESP_LOGW(TAG, "Failed to read data registers over I2C!");
         }
 
-        // Poll battery metrics every 5 seconds
-        vTaskDelay(pdMS_TO_TICKS(5000));
+        // Poll hardware values every 1 second
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
 
@@ -139,7 +131,7 @@ void app_main(void)
     // 2. Power on the display backlight panel
     bsp_display_backlight_on();
 
-    // 3. Construct user interface widgets, launcher, and tiles
+    // 3. Construct the clean battery UI dashboard
     build_ui();
 
     ESP_LOGI(TAG, "Display and UI initialized. Connecting to shared I2C bus...");
@@ -161,7 +153,6 @@ void app_main(void)
         
         esp_err_t ret = i2c_master_bus_add_device(bsp_bus, &pmu_cfg, &pmu_dev_handle);
         if (ret == ESP_OK) {
-            // Re-assign the PMU device handle to make sure reads can start
             ESP_LOGI(TAG, "AXP2101 registered successfully on shared BSP I2C bus");
         } else {
             ESP_LOGE(TAG, "Failed to register AXP2101 on shared bus: %s", esp_err_to_name(ret));
