@@ -42,7 +42,6 @@ static void ui_update_timer_cb(lv_timer_t * timer) {
         color_hex = 0xFF3232; 
     }
     
-    // Safely apply color utilizing v9 standards (eliminates pink artifacts)
     lv_obj_set_style_bg_color(battery_fill, lv_color_hex(color_hex), 0);
 
     char pct_str[16];
@@ -72,6 +71,7 @@ void build_ui(void) {
     lv_obj_align(lbl_title, LV_ALIGN_TOP_MID, 0, 45);
 
     lv_obj_t * battery_card = lv_obj_create(main_screen);
+    lv_obj_remove_style_all(battery_card); // <-- CRITICAL: Removes the pink box theme artifacts
     lv_obj_set_size(battery_card, 320, 320);
     lv_obj_align(battery_card, LV_ALIGN_CENTER, 0, 15);
     lv_obj_set_style_bg_color(battery_card, lv_color_hex(0x121214), 0);
@@ -86,22 +86,25 @@ void build_ui(void) {
     lv_obj_set_style_pad_row(battery_card, 24, 0);
 
     lv_obj_t * graphic_row = lv_obj_create(battery_card);
+    lv_obj_remove_style_all(graphic_row); // <-- CRITICAL
     lv_obj_set_size(graphic_row, 180, 80);
-    lv_obj_set_style_bg_opa(graphic_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_bg_opa(graphic_row, 0, 0);
     lv_obj_set_style_border_width(graphic_row, 0, 0);
     lv_obj_set_style_pad_all(graphic_row, 0, 0);
     lv_obj_set_flex_flow(graphic_row, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(graphic_row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
     lv_obj_t * body = lv_obj_create(graphic_row);
+    lv_obj_remove_style_all(body); // <-- CRITICAL
     lv_obj_set_size(body, 150, 70);
-    lv_obj_set_style_bg_opa(body, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_bg_opa(body, 0, 0);
     lv_obj_set_style_border_color(body, lv_color_hex(0xFFFFFF), 0);
     lv_obj_set_style_border_width(body, 3, 0);
     lv_obj_set_style_radius(body, 8, 0);
     lv_obj_set_style_pad_all(body, 5, 0);
 
     battery_fill = lv_obj_create(body);
+    lv_obj_remove_style_all(battery_fill); // <-- CRITICAL
     lv_obj_set_size(battery_fill, 134, 54);
     lv_obj_set_style_radius(battery_fill, 4, 0);
     lv_obj_set_style_bg_opa(battery_fill, LV_OPA_COVER, 0);
@@ -109,6 +112,7 @@ void build_ui(void) {
     lv_obj_align(battery_fill, LV_ALIGN_LEFT_MID, 0, 0);
 
     lv_obj_t * battery_tip = lv_obj_create(graphic_row);
+    lv_obj_remove_style_all(battery_tip); // <-- CRITICAL
     lv_obj_set_size(battery_tip, 8, 28);
     lv_obj_set_style_bg_color(battery_tip, lv_color_hex(0xFFFFFF), 0);
     lv_obj_set_style_bg_opa(battery_tip, LV_OPA_COVER, 0);
