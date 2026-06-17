@@ -85,3 +85,21 @@ void build_ui(void) {
     battery_fill = lv_obj_create(battery_outline);
     lv_obj_remove_style_all(battery_fill); // <-- CRITICAL: Removes the pink box theme artifacts
     lv_obj_set_size(battery_fill, 134, 54);
+    // 3px offset accounts for the border width of the outline
+    lv_obj_align(battery_fill, LV_ALIGN_LEFT_MID, 3, 0);
+    lv_obj_set_style_bg_color(battery_fill, lv_palette_main(LV_PALETTE_GREEN), 0);
+    lv_obj_set_style_bg_opa(battery_fill, 255, 0);
+    lv_obj_set_style_radius(battery_fill, 4, 0);
+
+    lbl_percentage = lv_label_create(main_screen);
+    lv_label_set_text(lbl_percentage, "--%");
+    lv_obj_set_style_text_color(lbl_percentage, lv_color_make(255, 255, 255), 0);
+    lv_obj_align(lbl_percentage, LV_ALIGN_CENTER, 0, 30);
+
+    lbl_status = lv_label_create(main_screen);
+    lv_label_set_text(lbl_status, "Locating PMU...");
+    lv_obj_set_style_text_color(lbl_status, lv_color_make(180, 180, 180), 0);
+    lv_obj_align(lbl_status, LV_ALIGN_CENTER, 0, 60);
+
+    lv_timer_create(ui_update_timer_cb, 250, NULL);
+}
