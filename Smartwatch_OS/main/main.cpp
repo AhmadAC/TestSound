@@ -17,7 +17,9 @@ extern "C" {
 
 #define TAG "main"
 
-// Config defaults
+// Config defaults for PMU specific I2C pins (According to Waveshare Schematic)
+#define I2C_PMU_SDA_IO 6
+#define I2C_PMU_SCL_IO 7
 #define I2C_MASTER_FREQ_HZ 100000
 #define I2C_MASTER_TIMEOUT_MS 1000
 
@@ -35,33 +37,38 @@ extern "C" {
 extern esp_err_t pmu_init();
 extern void pmu_isr_handler();
 
-// Shared I2C bus initialization using BSP
+// Dedicated I2C bus initialization for PMU
 esp_err_t i2c_init() {
-    i2c_master_bus_handle_t bsp_bus = bsp_i2c_get_handle();
-    if (bsp_bus == NULL) {
-        bsp_i2c_init();
-        bsp_bus = bsp_i2c_get_handle();
+    i2c_master_bus_config_t i2c_mst_config = {};
+    i2c_mst_config.i2c_port = -1; // Auto-select an available I2C port
+    i2c_mst_config.sda_io_num = (gpio_num_t)I2C_PMU_SDA_IO;
+    i2c_mst_config.scl_io_num = (gpio_num_t)I2C_PMU_SCL_IO;
+    i2c_mst_config.clk_source = I2C_CLK_SRC_DEFAULT;
+    i2c_mst_config.glitch_ignore_cnt = 7;
+    i2c_mst_config.flags.enable_internal_pullup = 1;
+
+    i2c_master_bus_handle_t pmu_bus_handle;
+    esp_err_t ret = i2c_new_master_bus(&i2c_mst_config, &pmu_bus_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to create PMU I2C master bus!");
+        return ret;
     }
 
-    if (bsp_bus == NULL) {
-        ESP_LOGE(TAG, "Failed to retrieve I2C master bus from BSP!");
-        return ESP_FAIL;
+    i2c_device_config_t dev_config = {};
+    dev_config.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+    dev_config.device_address = 0x34; // AXP2101 I2C Address
+    dev_config.scl_speed_hz = I2C_MASTER_FREQ_HZ;
+    dev_config.scl_wait_us = 0;
+    dev_config.flags.disable_ack_check = 0;
+
+    ret = i2c_master_bus_add_device(pmu_bus_handle, &dev_config, &pmu_dev_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to add PMU I2C device!");
     }
-
-    i2c_device_config_t dev_config = {
-        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-        .device_address = 0x34,
-        .scl_speed_hz = I2C_MASTER_FREQ_HZ,
-        .scl_wait_us = 0,
-        .flags = {
-            .disable_ack_check = 0
-        }
-    };
-
-    return i2c_master_bus_add_device(bsp_bus, &dev_config, &pmu_dev_handle);
+    return ret;
 }
 
-// PMU read function utilizing the custom BSP I2C handle
+// PMU read function utilizing the custom I2C handle
 int pmu_register_read(uint8_t devAddr, uint8_t regAddr, uint8_t *data, uint8_t len) {
     if (pmu_dev_handle == NULL) return -1;
     esp_err_t ret = i2c_master_transmit_receive(pmu_dev_handle, &regAddr, 1, data, len, I2C_MASTER_TIMEOUT_MS);
@@ -72,7 +79,7 @@ int pmu_register_read(uint8_t devAddr, uint8_t regAddr, uint8_t *data, uint8_t l
     return 0;
 }
 
-// PMU write function utilizing the custom BSP I2C handle
+// PMU write function utilizing the custom I2C handle
 int pmu_register_write_byte(uint8_t devAddr, uint8_t regAddr, uint8_t *data, uint8_t len) {
     if (pmu_dev_handle == NULL) return -1;
     uint8_t *buffer = (uint8_t *)malloc(len + 1);
@@ -107,11 +114,17 @@ extern "C" void app_main(void) {
     bsp_display_backlight_on();
     build_ui();
 
-    // Connect to the shared I2C bus and init PMU
-    ESP_ERROR_CHECK(i2c_init());
-    ESP_LOGI(TAG, "Shared BSP I2C bus retrieved and PMU registered.");
-
-    ESP_ERROR_CHECK(pmu_init());
-
-    xTaskCreate(pmu_hander_task, "App/pwr", 4 * 1024, NULL, 10, NULL);
+    // Connect to the dedicated PMU I2C bus and init PMU
+    if (i2c_init() == ESP_OK) {
+        ESP_LOGI(TAG, "Dedicated PMU I2C bus initialized.");
+        
+        // Removed ESP_ERROR_CHECK to prevent watch bootloops on bad battery states
+        if (pmu_init() == ESP_OK) {
+            xTaskCreate(pmu_hander_task, "App/pwr", 4 * 1024, NULL, 10, NULL);
+        } else {
+            ESP_LOGE(TAG, "PMU init failed! Proceeding without battery monitor.");
+        }
+    } else {
+        ESP_LOGE(TAG, "I2C Init failed! Proceeding without battery monitor.");
+    }
 }
