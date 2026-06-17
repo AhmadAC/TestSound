@@ -55,21 +55,33 @@ void i2c_clear_bus(int sda, int scl) {
     }
 }
 
-// Brute-force scanner that validates pins by reading the actual PMU Chip ID (Reg 0x03)
+// Verifies device is a real AXP2101 PMU by reading its physical Chip ID register (0x03)
+esp_err_t verify_pmu(i2c_master_dev_handle_t dev) {
+    uint8_t reg = 0x03;
+    uint8_t chip_id = 0;
+    // Timeout of 100ms is more than enough for a register read
+    esp_err_t ret = i2c_master_transmit_receive(dev, &reg, 1, &chip_id, 1, 100);
+    if (ret == ESP_OK && chip_id == 0x4A) {
+        return ESP_OK;
+    }
+    return ESP_FAIL;
+}
+
+// Brute-force scanner that tests safe GPIO pins
 esp_err_t brute_force_pmu_scan(int *out_sda, int *out_scl) {
-    int sda_candidates[] = {15, 6, 8, 4};
-    int scl_candidates[] = {14, 7, 9, 5};
-    int num_candidates = 4;
+    // Candidate safe pins (excluding PSRAM/Flash registers), starting with the most likely
+    int safe_pins[] = {15, 14, 6, 7, 8, 9, 4, 5, 10, 11, 12, 13, 16, 17, 18, 21, 38, 39, 40, 41, 42, 45, 46, 47, 48};
+    int num_pins = sizeof(safe_pins) / sizeof(safe_pins[0]);
 
-    ESP_LOGI(TAG, "Starting targeted I2C scanner to locate PMU...");
+    ESP_LOGI(TAG, "Starting robust brute-force PMU scanner...");
 
-    for (int i = 0; i < num_candidates; i++) {
-        for (int j = 0; j < num_candidates; j++) {
-            int sda = sda_candidates[i];
-            int scl = scl_candidates[j];
-            if (sda == scl) continue;
+    for (int sda_idx = 0; sda_idx < num_pins; sda_idx++) {
+        for (int scl_idx = 0; scl_idx < num_pins; scl_idx++) {
+            if (sda_idx == scl_idx) continue;
 
-            // Clear the bus and apply pull-ups
+            int sda = safe_pins[sda_idx];
+            int scl = safe_pins[scl_idx];
+
             i2c_clear_bus(sda, scl);
 
             i2c_master_bus_config_t i2c_mst_config = {};
@@ -96,23 +108,18 @@ esp_err_t brute_force_pmu_scan(int *out_sda, int *out_scl) {
                 continue;
             }
 
-            // Attempt to read Reg 0x03 (Chip ID)
-            uint8_t reg = 0x03;
-            uint8_t chip_id = 0;
-            esp_err_t ret = i2c_master_transmit_receive(temp_dev, &reg, 1, &chip_id, 1, 100);
-
-            if (ret == ESP_OK && (chip_id == 0x4A || chip_id == 0x41 || chip_id == 0x03)) {
-                ESP_LOGW(TAG, "FOUND PMU (Chip ID: 0x%02X) on SDA=%d, SCL=%d", chip_id, sda, scl);
+            if (verify_pmu(temp_dev) == ESP_OK) {
+                ESP_LOGW(TAG, "SUCCESS: Found verified AXP2101 PMU on SDA=%d, SCL=%d", sda, scl);
                 *out_sda = sda;
                 *out_scl = scl;
                 
-                // Keep the device handle for temporary setup
+                // Save handles for setup
                 pmu_dev_handle = temp_dev;
                 pmu_bus_handle = temp_bus;
                 return ESP_OK;
             }
 
-            // Cleanup if not found
+            // Clean up temporary device and bus for next attempt
             i2c_master_bus_rm_device(temp_dev);
             i2c_del_master_bus(temp_bus);
         }
@@ -164,37 +171,37 @@ extern "C" void app_main(void) {
     int pmu_sda = -1;
     int pmu_scl = -1;
 
-    // 1. Scan and find PMU on its proper pins
+    // 1. Scan and verify PMU on active hardware
     if (brute_force_pmu_scan(&pmu_sda, &pmu_scl) == ESP_OK) {
-        // 2. Initialize PMU using the temporary bus to enable ALDO rails
+        // 2. Initialize PMU to enable system voltage rails
         if (pmu_init() == ESP_OK) {
-            ESP_LOGI(TAG, "PMU successfully configured and powered on.");
+            ESP_LOGI(TAG, "PMU successfully initialized on scanned bus.");
         } else {
-            ESP_LOGE(TAG, "Failed to configure PMU rails!");
+            ESP_LOGE(TAG, "Failed to run PMU init!");
         }
 
-        // 3. Clean up temporary scanner bus to free pins
+        // 3. Clean up the scanner's temporary bus to free up the GPIO pins
         i2c_master_bus_rm_device(pmu_dev_handle);
         i2c_del_master_bus(pmu_bus_handle);
         pmu_dev_handle = NULL;
         pmu_bus_handle = NULL;
     } else {
-        ESP_LOGE(TAG, "AXP2101 PMU not found during scan!");
+        ESP_LOGE(TAG, "PMU completely absent or unresponsive!");
     }
 
-    // Give power rails a moment to settle
+    // Allow PMU voltage rails to stabilize
     vTaskDelay(pdMS_TO_TICKS(100));
 
-    // 4. Force pull-ups on 15/14 again so the BSP can initialize properly
+    // 4. Force pull-ups on the watch's physical I2C pins so the BSP boots cleanly
     gpio_set_pull_mode((gpio_num_t)15, GPIO_PULLUP_ONLY);
     gpio_set_pull_mode((gpio_num_t)14, GPIO_PULLUP_ONLY);
 
-    // 5. Initialize display and UI (BSP will now safely initialize shared I2C)
+    // 5. Initialize display and UI (shared I2C initializes safely here)
     bsp_display_start();
     bsp_display_backlight_on();
     build_ui();
 
-    // 6. Bind PMU device permanently onto the BSP's shared bus
+    // 6. Permanently bind PMU device onto the BSP's shared I2C bus
     i2c_master_bus_handle_t bsp_bus = bsp_i2c_get_handle();
     if (bsp_bus != NULL) {
         i2c_device_config_t dev_config = {};
@@ -205,7 +212,7 @@ extern "C" void app_main(void) {
         esp_err_t ret = i2c_master_bus_add_device(bsp_bus, &dev_config, &pmu_dev_handle);
         if (ret == ESP_OK) {
             xTaskCreate(pmu_hander_task, "App/pwr", 4 * 1024, NULL, 10, NULL);
-            ESP_LOGI(TAG, "PMU registered permanently on the shared I2C bus.");
+            ESP_LOGI(TAG, "PMU bound permanently to the shared display bus.");
         } else {
             ESP_LOGE(TAG, "Failed to bind PMU permanently!");
         }
