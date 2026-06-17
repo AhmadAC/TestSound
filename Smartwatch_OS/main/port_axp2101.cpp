@@ -60,14 +60,13 @@ esp_err_t pmu_init()
 
     PMU.clearIrqStatus();
 
-    // Enable PMU ADC measurements
-    PMU.enableVbusVoltageMeasure();
-    PMU.enableBattVoltageMeasure();
-    PMU.enableSystemVoltageMeasure();
-    PMU.enableTemperatureMeasure();
+    // CRITICAL FIX: Write directly to the ADC control register (0x30) to enable all measurements
+    // Bit 0: Battery Voltage, Bit 2: VBUS Voltage, Bit 3: System Voltage, Bit 4: Die Temp
+    // 0x01 | 0x04 | 0x08 | 0x10 = 0x1D
+    PMU.writeRegister(0x30, 0x1D);
 
-    // Completely disable physical TS pin measurement to prevent faults (no thermistor on board)
-    PMU.disableTSPinMeasure();
+    // CRITICAL FIX: Enable Battery Presence Detection explicitly (0x68)
+    PMU.writeRegister(0x68, 0x01);
 
     // Disable all PMU interrupts and clear status registers
     PMU.disableIRQ(XPOWERS_AXP2101_ALL_IRQ);
@@ -95,11 +94,23 @@ void pmu_isr_handler()
     // Read latest status mask
     PMU.getIrqStatus();
 
-    // Collect and update global parameters with error-safe defaults
-    battery_voltage = (float)PMU.getBattVoltage() / 1000.0f;
+    // CRITICAL FIX: Bypass library isBatteryConnect() checks by reading raw registers directly
+    uint8_t v_high = 0;
+    uint8_t v_low = 0;
+    if (pmu_register_read(0x34, 0x34, &v_high, 1) == 0 && pmu_register_read(0x34, 0x35, &v_low, 1) == 0) {
+        uint16_t raw_mv = ((v_high & 0x1F) << 8) | v_low;
+        battery_voltage = (float)raw_mv / 1000.0f;
+    } else {
+        battery_voltage = 0.0f;
+    }
     
-    int percent = PMU.getBatteryPercent();
-    battery_percentage = (percent < 0) ? 0.0f : (float)percent;
+    // Read battery capacity directly from AXP2101 percentage register (0xA4)
+    uint8_t pct_raw = 0;
+    if (pmu_register_read(0x34, 0xA4, &pct_raw, 1) == 0) {
+        battery_percentage = (float)pct_raw;
+    } else {
+        battery_percentage = 0.0f;
+    }
     
     battery_present = PMU.isBatteryConnect();
     battery_charging = PMU.isVbusIn();
@@ -114,6 +125,12 @@ void pmu_isr_handler()
     // Trust voltage readings for physical battery connections
     if (!battery_present && battery_voltage > 2.0f) {
         battery_present = true;
+    }
+
+    // Trust voltage readings to see if we are charging
+    if (battery_charging == false && battery_voltage > 4.15f) {
+        // Simple heuristic if VBUS status register hasn't converged
+        battery_charging = true;
     }
 
     ESP_LOGI(TAG, "Battery metrics: %.3f V | %d%% [Connected: %d, USB: %d]", 
