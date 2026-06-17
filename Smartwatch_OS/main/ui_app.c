@@ -64,9 +64,9 @@ void build_ui(void) {
     lv_obj_set_style_text_color(lbl_title, lv_color_make(150, 150, 150), 0);
     lv_obj_align(lbl_title, LV_ALIGN_TOP_MID, 0, 45);
 
-    // Replaced nested layout containers with simple absolute positioning to completely avoid LVGL bugs
+    // Replaced nested layout containers with simple absolute positioning to completely avoid LVGL theme bugs
     lv_obj_t * battery_outline = lv_obj_create(main_screen);
-    lv_obj_remove_style_all(battery_outline);
+    lv_obj_remove_style_all(battery_outline); // <-- CRITICAL: Removes the pink box theme artifacts
     lv_obj_set_size(battery_outline, 140, 60);
     lv_obj_align(battery_outline, LV_ALIGN_CENTER, 0, -20);
     lv_obj_set_style_bg_opa(battery_outline, 0, 0); // Transparent background
@@ -75,7 +75,7 @@ void build_ui(void) {
     lv_obj_set_style_radius(battery_outline, 8, 0);
 
     lv_obj_t * battery_tip = lv_obj_create(main_screen);
-    lv_obj_remove_style_all(battery_tip);
+    lv_obj_remove_style_all(battery_tip); // <-- CRITICAL
     lv_obj_set_size(battery_tip, 8, 28);
     lv_obj_align_to(battery_tip, battery_outline, LV_ALIGN_OUT_RIGHT_MID, -2, 0);
     lv_obj_set_style_bg_color(battery_tip, lv_color_make(255, 255, 255), 0);
@@ -83,7 +83,7 @@ void build_ui(void) {
     lv_obj_set_style_radius(battery_tip, 4, 0);
 
     battery_fill = lv_obj_create(battery_outline);
-    lv_obj_remove_style_all(battery_fill);
+    lv_obj_remove_style_all(battery_fill); // <-- CRITICAL
     lv_obj_set_size(battery_fill, 134, 54);
     // 3px offset accounts for the border width of the outline
     lv_obj_align(battery_fill, LV_ALIGN_LEFT_MID, 3, 0);
