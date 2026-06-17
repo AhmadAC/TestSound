@@ -92,17 +92,28 @@ esp_err_t i2c_init() {
 int pmu_register_read(uint8_t devAddr, uint8_t regAddr, uint8_t *data, uint8_t len) {
     if (pmu_dev_handle == NULL) return -1;
 
-    // SPOOF the Chip ID register to bypass the library's strict check on custom hardware
-    if (regAddr == 0x03 && len == 1) {
-        *data = 0x4A; // Return AXP2101 default Chip ID (0x4A)
-        return 0;     // Success
-    }
-
-    esp_err_t ret = i2c_master_transmit_receive(pmu_dev_handle, &regAddr, 1, data, len, I2C_MASTER_TIMEOUT_MS);
+    // Read the real data from the PMU first to log it
+    uint8_t temp_buf[16] = {0};
+    esp_err_t ret = i2c_master_transmit_receive(pmu_dev_handle, &regAddr, 1, temp_buf, len, I2C_MASTER_TIMEOUT_MS);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "PMU I2C Read Reg 0x%02X Failed! Err: %s", regAddr, esp_err_to_name(ret));
         return -1;
     }
+
+    // Diagnostic logging for register reads
+    if (len == 1) {
+        ESP_LOGI(TAG, "I2C READ [0x%02X] -> Real: 0x%02X", regAddr, temp_buf[0]);
+    } else {
+        ESP_LOGI(TAG, "I2C READ [0x%02X] -> Real: %d bytes read", regAddr, len);
+    }
+
+    memcpy(data, temp_buf, len);
+
+    // SPOOF the Chip ID register to bypass the library's strict check on custom hardware
+    if (regAddr == 0x03 && len == 1) {
+        *data = 0x4A; // Return AXP2101 default Chip ID (0x4A)
+    }
+
     return 0;
 }
 
@@ -120,6 +131,12 @@ int pmu_register_write_byte(uint8_t devAddr, uint8_t regAddr, uint8_t *data, uin
         ESP_LOGE(TAG, "PMU I2C Write Reg 0x%02X Failed! Err: %s", regAddr, esp_err_to_name(ret));
         return -1;
     }
+
+    // Diagnostic logging for register writes
+    if (len == 1) {
+        ESP_LOGI(TAG, "I2C WRITE [0x%02X] <- 0x%02X", regAddr, data[0]);
+    }
+    
     return 0;
 }
 
