@@ -7,7 +7,7 @@
 #include "esp_log.h"
 #include "esp_err.h"
 #include "driver/gpio.h"
-#include "driver/i2c_master.h" // Use ONLY the new I2C driver to prevent conflicts
+#include "driver/i2c_master.h" // STRICTLY use the new I2C driver to prevent conflicts
 #include "bsp/esp-bsp.h"
 #include "sdkconfig.h"
 
@@ -17,9 +17,9 @@ extern "C" {
 
 #define TAG "main"
 
-// Dedicated PMU I2C pins (from Waveshare Schematic)
-#define I2C_PMU_SDA_IO     8
-#define I2C_PMU_SCL_IO     9
+// Dedicated PMU I2C pins (Confirmed from Waveshare Schematic)
+#define I2C_PMU_SDA_IO     6
+#define I2C_PMU_SCL_IO     7
 #define I2C_MASTER_FREQ_HZ 400000
 #define I2C_MASTER_TIMEOUT_MS 1000
 
@@ -40,7 +40,7 @@ extern void pmu_isr_handler();
 // Dedicated I2C bus initialization for PMU
 esp_err_t i2c_init() {
     i2c_master_bus_config_t i2c_mst_config = {};
-    i2c_mst_config.i2c_port = -1; // Auto-select
+    i2c_mst_config.i2c_port = -1; // Auto-select available port
     i2c_mst_config.sda_io_num = (gpio_num_t)I2C_PMU_SDA_IO;
     i2c_mst_config.scl_io_num = (gpio_num_t)I2C_PMU_SCL_IO;
     i2c_mst_config.clk_source = I2C_CLK_SRC_DEFAULT;
