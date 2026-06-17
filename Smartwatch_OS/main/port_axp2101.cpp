@@ -68,6 +68,9 @@ esp_err_t pmu_init()
     // CRITICAL FIX: Enable Battery Presence Detection explicitly (0x68)
     PMU.writeRegister(0x68, 0x01);
 
+    // CRITICAL FIX: Enable Fuel Gauge explicitly (0x18)
+    PMU.writeRegister(0x18, 0x08);
+
     // Disable all PMU interrupts and clear status registers
     PMU.disableIRQ(XPOWERS_AXP2101_ALL_IRQ);
     PMU.clearIrqStatus();
@@ -113,7 +116,9 @@ void pmu_isr_handler()
     }
     
     battery_present = PMU.isBatteryConnect();
-    battery_charging = PMU.isVbusIn();
+    
+    // CRITICAL FIX: Use the reliable isVbusGood() flag since isVbusIn() depends on volatile bits
+    battery_charging = PMU.isVbusGood();
 
     // Fallback percentage calculation based on voltage curves if gauge hasn't converged
     if (battery_percentage == 0.0f && battery_voltage > 3.0f) {
