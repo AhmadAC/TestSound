@@ -19,6 +19,10 @@ extern "C" {
 
 #define I2C_MASTER_TIMEOUT_MS 1000
 
+// Hardware I2C pins for the Waveshare ESP32-S3-Touch-AMOLED-2.06 watch
+#define I2C_SDA_IO     15
+#define I2C_SCL_IO     14
+
 static i2c_master_dev_handle_t pmu_dev_handle = NULL;
 static i2c_master_bus_handle_t pmu_bus_handle = NULL;
 
@@ -44,7 +48,7 @@ void i2c_clear_bus(int sda, int scl) {
     
     gpio_set_level((gpio_num_t)sda, 1);
     gpio_set_level((gpio_num_t)scl, 1);
-    vTaskDelay(pdMS_TO_TICKS(5));
+    vTaskDelay(pdMS_TO_TICKS(10));
 
     // Toggle SCL 9 times to free any stuck slaves
     for (int i = 0; i < 9; i++) {
@@ -55,91 +59,56 @@ void i2c_clear_bus(int sda, int scl) {
     }
 }
 
-// Verifies device is a real PMU by reading its physical Chip ID register (0x03)
-esp_err_t verify_pmu(i2c_master_dev_handle_t dev, int sda, int scl, uint8_t *out_id) {
-    uint8_t reg = 0x03;
-    uint8_t chip_id = 0;
-    
-    // Perform transaction
-    esp_err_t ret = i2c_master_transmit_receive(dev, &reg, 1, &chip_id, 1, 100);
-    if (ret == ESP_OK) {
-        *out_id = chip_id;
-        // 0x4A is AXP2101, 0x41 is AXP202, 0x03 is AXP192
-        if (chip_id == 0x4A || chip_id == 0x41 || chip_id == 0x03) {
+// Scans the entire I2C address space on pins 15 & 14 to locate all alive devices
+esp_err_t scan_i2c_bus() {
+    ESP_LOGW(TAG, "==================================================");
+    ESP_LOGW(TAG, " DIAGNOSTIC I2C ADDRESS SCAN ON PINS 15 & 14... ");
+    ESP_LOGW(TAG, "==================================================");
+
+    i2c_clear_bus(I2C_SDA_IO, I2C_SCL_IO);
+
+    i2c_master_bus_config_t i2c_mst_config = {};
+    i2c_mst_config.i2c_port = I2C_NUM_0; // Force Port 0
+    i2c_mst_config.sda_io_num = (gpio_num_t)I2C_SDA_IO;
+    i2c_mst_config.scl_io_num = (gpio_num_t)I2C_SCL_IO;
+    i2c_mst_config.clk_source = I2C_CLK_SRC_DEFAULT;
+    i2c_mst_config.glitch_ignore_cnt = 7;
+    i2c_mst_config.flags.enable_internal_pullup = 1; // Enable internal pull-ups
+
+    esp_err_t ret = i2c_new_master_bus(&i2c_mst_config, &pmu_bus_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to create I2C bus for scanning! Err: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    bool pmu_found = false;
+    for (uint8_t addr = 1; addr < 128; addr++) {
+        esp_err_t probe_ret = i2c_master_probe(pmu_bus_handle, addr, 50);
+        if (probe_ret == ESP_OK) {
+            ESP_LOGW(TAG, "Found responsive I2C device at Address: 0x%02X (%d)", addr, addr);
+            if (addr == 0x34) {
+                pmu_found = true;
+            }
+        }
+    }
+    ESP_LOGW(TAG, "==================================================");
+
+    if (pmu_found) {
+        // Register PMU on this successful bus
+        i2c_device_config_t dev_config = {};
+        dev_config.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+        dev_config.device_address = 0x34; // AXP2101 Address
+        dev_config.scl_speed_hz = 100000;  // 100 kHz for stability
+
+        ret = i2c_master_bus_add_device(pmu_bus_handle, &dev_config, &pmu_dev_handle);
+        if (ret == ESP_OK) {
             return ESP_OK;
         }
     }
-    return ESP_FAIL;
-}
 
-// Brute-force scanner that tests safe GPIO pins on I2C Port 0
-esp_err_t brute_force_pmu_scan(int *out_sda, int *out_scl) {
-    // List of safe pins, prioritized with 15 (SDA) and 14 (SCL) at the very front
-    int safe_pins[] = {15, 14, 6, 7, 8, 9, 4, 5, 10, 11, 12, 13, 16, 17, 18, 21, 38, 39, 40, 41, 42, 45, 46, 47, 48};
-    int num_pins = sizeof(safe_pins) / sizeof(safe_pins[0]);
-
-    ESP_LOGW(TAG, "==================================================");
-    ESP_LOGW(TAG, " RUNNING DIAGNOSTIC BRUTE-FORCE I2C SCANNER...   ");
-    ESP_LOGW(TAG, "==================================================");
-
-    for (int sda_idx = 0; sda_idx < num_pins; sda_idx++) {
-        for (int scl_idx = 0; scl_idx < num_pins; scl_idx++) {
-            if (sda_idx == scl_idx) continue;
-
-            int sda = safe_pins[sda_idx];
-            int scl = safe_pins[scl_idx];
-
-            i2c_clear_bus(sda, scl);
-
-            i2c_master_bus_config_t i2c_mst_config = {};
-            i2c_mst_config.i2c_port = I2C_NUM_0; // Explicitly lock to Port 0 to override BSP later
-            i2c_mst_config.sda_io_num = (gpio_num_t)sda;
-            i2c_mst_config.scl_io_num = (gpio_num_t)scl;
-            i2c_mst_config.clk_source = I2C_CLK_SRC_DEFAULT;
-            i2c_mst_config.glitch_ignore_cnt = 7;
-            i2c_mst_config.flags.enable_internal_pullup = 1; // Enable internal pull-ups
-
-            i2c_master_bus_handle_t temp_bus;
-            if (i2c_new_master_bus(&i2c_mst_config, &temp_bus) != ESP_OK) {
-                continue;
-            }
-
-            i2c_device_config_t dev_config = {};
-            dev_config.dev_addr_length = I2C_ADDR_BIT_LEN_7;
-            dev_config.device_address = 0x34; // AXP2101 Address
-            dev_config.scl_speed_hz = 100000;  // 100 kHz is required for internal pullups to work!
-
-            i2c_master_dev_handle_t temp_dev;
-            if (i2c_master_bus_add_device(temp_bus, &dev_config, &temp_dev) != ESP_OK) {
-                i2c_del_master_bus(temp_bus);
-                continue;
-            }
-
-            uint8_t read_id = 0;
-            esp_err_t verify_ret = verify_pmu(temp_dev, sda, scl, &read_id);
-            
-            // Print the scan result for EVERY single pin pair tested
-            ESP_LOGI(TAG, "Testing SDA=%d, SCL=%d | Read ID: 0x%02X | Result: %s", 
-                     sda, scl, read_id, (verify_ret == ESP_OK) ? "SUCCESS!" : "FAIL");
-
-            if (verify_ret == ESP_OK) {
-                ESP_LOGW(TAG, "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-                ESP_LOGW(TAG, "!! PMU VERIFIED ON SDA=%d, SCL=%d (ID: 0x%02X) !!", sda, scl, read_id);
-                ESP_LOGW(TAG, "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-                *out_sda = sda;
-                *out_scl = scl;
-                
-                pmu_dev_handle = temp_dev;
-                pmu_bus_handle = temp_bus;
-                return ESP_OK;
-            }
-
-            // Cleanup if not verified
-            i2c_master_bus_rm_device(temp_dev);
-            i2c_del_master_bus(temp_bus);
-        }
-    }
-
+    // Clean up bus if PMU was not found
+    i2c_del_master_bus(pmu_bus_handle);
+    pmu_bus_handle = NULL;
     return ESP_ERR_NOT_FOUND;
 }
 
@@ -183,27 +152,25 @@ extern "C" void app_main(void) {
     vTaskDelay(pdMS_TO_TICKS(1000));
     ESP_LOGI(TAG, "Starting Smartwatch OS...");
 
-    int pmu_sda = -1;
-    int pmu_scl = -1;
-
-    // 1. Locate and verify the PMU directly on Port 0
-    if (brute_force_pmu_scan(&pmu_sda, &pmu_scl) == ESP_OK) {
-        // 2. Initialize the PMU on the discovered pins
+    // 1. Scan and register PMU first using the custom address scanner on the real pins (15/14)
+    if (scan_i2c_bus() == ESP_OK) {
+        // 2. Initialize PMU to enable system voltage rails
         if (pmu_init() == ESP_OK) {
             xTaskCreate(pmu_hander_task, "App/pwr", 4 * 1024, NULL, 10, NULL);
-            ESP_LOGI(TAG, "PMU successfully initialized on SDA=%d, SCL=%d", pmu_sda, pmu_scl);
+            ESP_LOGI(TAG, "PMU successfully initialized on the custom bus.");
         } else {
             ESP_LOGE(TAG, "PMU hardware configuration failed!");
         }
     } else {
-        ESP_LOGE(TAG, "AXP2101 PMU (0x34) was NOT found on any pin combination!");
+        ESP_LOGE(TAG, "PMU was not found at 0x34 during address scan!");
     }
 
     // Allow PMU voltage rails to stabilize
     vTaskDelay(pdMS_TO_TICKS(100));
 
     // 3. Initialize display and UI. 
-    // The BSP's i2c_init will reuse our working 100kHz I2C bus automatically.
+    // Since we forced our scanner to Port 0 and left the bus open, bsp_display_start
+    // will see that Port 0 is already active, skip its own config, and cleanly reuse our bus!
     bsp_display_start();
     bsp_display_backlight_on();
     build_ui();
