@@ -147,6 +147,43 @@ esp_err_t brute_force_pmu_scan(int *out_sda, int *out_scl) {
     return ESP_ERR_NOT_FOUND;
 }
 
+// PMU read function utilizing the active I2C handle
+int pmu_register_read(uint8_t devAddr, uint8_t regAddr, uint8_t *data, uint8_t len) {
+    if (pmu_dev_handle == NULL) return -1;
+    esp_err_t ret = i2c_master_transmit_receive(pmu_dev_handle, &regAddr, 1, data, len, I2C_MASTER_TIMEOUT_MS);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "PMU I2C Read Reg 0x%02X Failed! Err: %s", regAddr, esp_err_to_name(ret));
+        return -1;
+    }
+    return 0;
+}
+
+// PMU write function utilizing the active I2C handle
+int pmu_register_write_byte(uint8_t devAddr, uint8_t regAddr, uint8_t *data, uint8_t len) {
+    if (pmu_dev_handle == NULL) return -1;
+    uint8_t *buffer = (uint8_t *)malloc(len + 1);
+    if (!buffer) return -1;
+    buffer[0] = regAddr;
+    memcpy(&buffer[1], data, len);
+
+    esp_err_t ret = i2c_master_transmit(pmu_dev_handle, buffer, len + 1, I2C_MASTER_TIMEOUT_MS);
+    free(buffer);
+
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "PMU I2C Write Reg 0x%02X Failed! Err: %s", regAddr, esp_err_to_name(ret));
+        return -1;
+    }
+    return 0;
+}
+
+// Background task to poll the battery metrics
+static void pmu_hander_task(void *args) {
+    while (1) {
+        pmu_isr_handler();
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+
 void setup_pmu_i2c() {
     // 1. First, check if the PMU is just sharing the display's I2C bus (Very common)
     i2c_master_bus_handle_t bsp_bus = bsp_i2c_get_handle();
@@ -192,40 +229,6 @@ void setup_pmu_i2c() {
         }
     } else {
         ESP_LOGE(TAG, "PMU not found on any pins!");
-    }
-}
-
-int pmu_register_read(uint8_t devAddr, uint8_t regAddr, uint8_t *data, uint8_t len) {
-    if (pmu_dev_handle == NULL) return -1;
-    esp_err_t ret = i2c_master_transmit_receive(pmu_dev_handle, &regAddr, 1, data, len, I2C_MASTER_TIMEOUT_MS);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "PMU I2C Read Reg 0x%02X Failed! Err: %s", regAddr, esp_err_to_name(ret));
-        return -1;
-    }
-    return 0;
-}
-
-int pmu_register_write_byte(uint8_t devAddr, uint8_t regAddr, uint8_t *data, uint8_t len) {
-    if (pmu_dev_handle == NULL) return -1;
-    uint8_t *buffer = (uint8_t *)malloc(len + 1);
-    if (!buffer) return -1;
-    buffer[0] = regAddr;
-    memcpy(&buffer[1], data, len);
-
-    esp_err_t ret = i2c_master_transmit(pmu_dev_handle, buffer, len + 1, I2C_MASTER_TIMEOUT_MS);
-    free(buffer);
-
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "PMU I2C Write Reg 0x%02X Failed! Err: %s", regAddr, esp_err_to_name(ret));
-        return -1;
-    }
-    return 0;
-}
-
-static void pmu_hander_task(void *args) {
-    while (1) {
-        pmu_isr_handler();
-        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
 
