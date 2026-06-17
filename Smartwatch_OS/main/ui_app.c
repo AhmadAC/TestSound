@@ -27,7 +27,7 @@ static void ui_update_timer_cb(lv_timer_t * timer) {
     if (fill_width > 134) fill_width = 134;
     lv_obj_set_width(battery_fill, fill_width);
 
-    // Using pure LV_PALETTE rendering ensures no pink theme artifacts
+    // Using pure LV_PALETTE rendering ensures no pink artifacts
     lv_color_t color;
     if (battery_charging) {
         color = lv_palette_main(LV_PALETTE_BLUE);
