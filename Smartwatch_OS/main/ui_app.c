@@ -42,7 +42,7 @@ static void ui_update_timer_cb(lv_timer_t * timer) {
         color_hex = 0xFF3232; 
     }
     
-    // Safely apply color utilizing v9 standards
+    // Safely apply color utilizing v9 standards (eliminates pink artifacts)
     lv_obj_set_style_bg_color(battery_fill, lv_color_hex(color_hex), 0);
 
     char pct_str[16];
@@ -52,12 +52,12 @@ static void ui_update_timer_cb(lv_timer_t * timer) {
     char status_str[64];
     if (battery_charging) {
         if (battery_percentage >= 99.0f) {
-            snprintf(status_str, sizeof(status_str), "%.2f V  -  Charged", battery_voltage);
+            snprintf(status_str, sizeof(status_str), "%.2f V - Charged", battery_voltage);
         } else {
-            snprintf(status_str, sizeof(status_str), "%.2f V  -  Charging", battery_voltage);
+            snprintf(status_str, sizeof(status_str), "%.2f V - Charging", battery_voltage);
         }
     } else {
-        snprintf(status_str, sizeof(status_str), "%.2f V  -  Battery", battery_voltage);
+        snprintf(status_str, sizeof(status_str), "%.2f V - Battery", battery_voltage);
     }
     lv_label_set_text(lbl_status, status_str);
 }
