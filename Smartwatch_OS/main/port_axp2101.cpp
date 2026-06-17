@@ -115,6 +115,14 @@ void pmu_isr_handler()
         battery_percentage = 0.0f;
     }
     
+    // DIAGNOSTIC READ: Read VBUS (USB) bus voltage directly (0x38/0x39) to prove ADC is functional
+    uint8_t vbus_h = 0;
+    uint8_t vbus_l = 0;
+    if (pmu_register_read(0x34, 0x38, &vbus_h, 1) == 0 && pmu_register_read(0x34, 0x39, &vbus_l, 1) == 0) {
+        uint16_t vbus_mv = ((vbus_h & 0x1F) << 8) | vbus_l;
+        ESP_LOGI(TAG, "DIAGNOSTIC: Shared I2C Bus is alive. Raw USB Voltage read = %d mV", vbus_mv);
+    }
+    
     battery_present = PMU.isBatteryConnect();
     
     // CRITICAL FIX: Use the reliable isVbusGood() flag since isVbusIn() depends on volatile bits
