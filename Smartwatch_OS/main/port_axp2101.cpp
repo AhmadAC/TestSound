@@ -24,10 +24,9 @@ extern "C" {
 
 esp_err_t pmu_init()
 {
-    // We use 0x6B as the dummy address since pmu_register_read automatically routes
-    // to the active device handle mapped in main.cpp
+    // Use 0x6B as established from your address scan
     if (PMU.begin(0x6B, pmu_register_read, pmu_register_write_byte)) {
-        ESP_LOGI(TAG, "SY6970 PMU initialized successfully!");
+        ESP_LOGI(TAG, "SY6970 PMU initialized successfully at 0x6B!");
     } else {
         ESP_LOGE(TAG, "Failed to communicate with SY6970 PMU!");
         return ESP_FAIL;

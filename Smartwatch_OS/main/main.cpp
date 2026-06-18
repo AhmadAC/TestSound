@@ -21,7 +21,7 @@ extern "C" {
 #define I2C_PMU_SDA_IO     15
 #define I2C_PMU_SCL_IO     14
 #define I2C_MASTER_FREQ_HZ 100000 
-#define I2C_MASTER_TIMEOUT_MS 50 // Short timeout to prevent WDT crashes!
+#define I2C_MASTER_TIMEOUT_MS 50 
 
 static i2c_master_dev_handle_t pmu_dev_handle = NULL;
 
@@ -72,22 +72,10 @@ esp_err_t i2c_init() {
         return ESP_FAIL;
     }
 
-    // Safely probe to find exact SY6970 address without triggering Watchdog Timeouts
-    uint8_t pmu_addr = 0;
-    if (i2c_master_probe(bsp_bus, 0x6B, 50) == ESP_OK) {
-        pmu_addr = 0x6B;
-    } else if (i2c_master_probe(bsp_bus, 0x6A, 50) == ESP_OK) {
-        pmu_addr = 0x6A;
-    }
-
-    if (pmu_addr == 0) {
-        ESP_LOGE(TAG, "SY6970 PMU not found on I2C bus!");
-        return ESP_FAIL;
-    }
-
+    // Register 0x6B (SY6970 Standard Address from your log) directly to avoid i2c_master_probe crash
     i2c_device_config_t dev_cfg = {};
     dev_cfg.dev_addr_length = I2C_ADDR_BIT_LEN_7;
-    dev_cfg.device_address = pmu_addr; 
+    dev_cfg.device_address = 0x6B; 
     dev_cfg.scl_speed_hz = I2C_MASTER_FREQ_HZ;
     dev_cfg.scl_wait_us = 0;
     dev_cfg.flags.disable_ack_check = 0;
