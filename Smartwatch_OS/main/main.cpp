@@ -20,10 +20,12 @@ extern "C" {
 // Confirmed hardware I2C pins for the Waveshare ESP32-S3-Touch-AMOLED-2.06 watch
 #define I2C_PMU_SDA_IO     15
 #define I2C_PMU_SCL_IO     14
-#define I2C_MASTER_FREQ_HZ 100000 // 100kHz is required for internal pull-ups to work stably
+#define I2C_MASTER_FREQ_HZ 100000 
 #define I2C_MASTER_TIMEOUT_MS 1000
 
-static i2c_master_dev_handle_t pmu_dev_handle = NULL;
+// Handles for both possible SY6970 addresses on V2.0.0 boards
+static i2c_master_dev_handle_t pmu_dev_6a = NULL;
+static i2c_master_dev_handle_t pmu_dev_6b = NULL;
 
 extern "C" {
     float battery_percentage = 0.0f;
@@ -38,7 +40,6 @@ extern void pmu_isr_handler();
 
 // Clears the specified I2C bus pins to release stuck slaves
 void i2c_clear_bus() {
-    ESP_LOGI(TAG, "Preparing shared I2C bus pins (SDA=%d, SCL=%d)...", I2C_PMU_SDA_IO, I2C_PMU_SCL_IO);
     gpio_reset_pin((gpio_num_t)I2C_PMU_SDA_IO);
     gpio_reset_pin((gpio_num_t)I2C_PMU_SCL_IO);
     gpio_set_direction((gpio_num_t)I2C_PMU_SDA_IO, GPIO_MODE_INPUT_OUTPUT_OD);
@@ -61,7 +62,6 @@ void i2c_clear_bus() {
 
 // Initialize I2C utilizing the BSP bus architecture
 esp_err_t i2c_init() {
-    // bsp_i2c_init() initializes the bus on the board's default I2C pins (15, 14)
     esp_err_t ret = bsp_i2c_init(); 
     if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
         ESP_LOGE(TAG, "bsp_i2c_init failed! Err: %s", esp_err_to_name(ret));
@@ -74,53 +74,48 @@ esp_err_t i2c_init() {
         return ESP_FAIL;
     }
 
-    // Add AXP2101 PMU device to the shared bus
-    i2c_device_config_t dev_config = {};
-    dev_config.dev_addr_length = I2C_ADDR_BIT_LEN_7;
-    dev_config.device_address = 0x34; // AXP2101 I2C Address
-    dev_config.scl_speed_hz = I2C_MASTER_FREQ_HZ;
-    dev_config.scl_wait_us = 0;
-    dev_config.flags.disable_ack_check = 0;
+    i2c_device_config_t dev_cfg = {};
+    dev_cfg.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+    dev_cfg.scl_speed_hz = I2C_MASTER_FREQ_HZ;
+    dev_cfg.scl_wait_us = 0;
+    dev_cfg.flags.disable_ack_check = 0;
 
-    ret = i2c_master_bus_add_device(bsp_bus, &dev_config, &pmu_dev_handle);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to add PMU I2C device! Err: %s", esp_err_to_name(ret));
-    }
-    return ret;
+    // Register 0x6A (SY6970 Alternative)
+    dev_cfg.device_address = 0x6A; 
+    i2c_master_bus_add_device(bsp_bus, &dev_cfg, &pmu_dev_6a);
+
+    // Register 0x6B (SY6970 Standard)
+    dev_cfg.device_address = 0x6B; 
+    i2c_master_bus_add_device(bsp_bus, &dev_cfg, &pmu_dev_6b);
+
+    return ESP_OK;
 }
 
 int pmu_register_read(uint8_t devAddr, uint8_t regAddr, uint8_t *data, uint8_t len) {
-    if (pmu_dev_handle == NULL) return -1;
+    i2c_master_dev_handle_t handle = (devAddr == 0x6A) ? pmu_dev_6a : pmu_dev_6b;
+    if (handle == NULL) return -1;
 
-    esp_err_t ret = i2c_master_transmit_receive(pmu_dev_handle, &regAddr, 1, data, len, I2C_MASTER_TIMEOUT_MS);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "PMU I2C Read Reg 0x%02X Failed! Err: %s", regAddr, esp_err_to_name(ret));
+    if (i2c_master_transmit_receive(handle, &regAddr, 1, data, len, I2C_MASTER_TIMEOUT_MS) != ESP_OK) {
         return -1;
     }
-
-    // SPOOF the Chip ID register to bypass the library's strict check on custom hardware
-    if (regAddr == 0x03 && len == 1) {
-        *data = 0x4A; // Return AXP2101 default Chip ID (0x4A)
-    }
-
     return 0;
 }
 
 int pmu_register_write_byte(uint8_t devAddr, uint8_t regAddr, uint8_t *data, uint8_t len) {
-    if (pmu_dev_handle == NULL) return -1;
+    i2c_master_dev_handle_t handle = (devAddr == 0x6A) ? pmu_dev_6a : pmu_dev_6b;
+    if (handle == NULL) return -1;
+    
     uint8_t *buffer = (uint8_t *)malloc(len + 1);
     if (!buffer) return -1;
     buffer[0] = regAddr;
     memcpy(&buffer[1], data, len);
 
-    esp_err_t ret = i2c_master_transmit(pmu_dev_handle, buffer, len + 1, I2C_MASTER_TIMEOUT_MS);
+    esp_err_t ret = i2c_master_transmit(handle, buffer, len + 1, I2C_MASTER_TIMEOUT_MS);
     free(buffer);
 
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "PMU I2C Write Reg 0x%02X Failed! Err: %s", regAddr, esp_err_to_name(ret));
         return -1;
     }
-    
     return 0;
 }
 
@@ -150,8 +145,6 @@ extern "C" void app_main(void) {
 
     // 4. Connect to the shared I2C bus and init PMU
     if (i2c_init() == ESP_OK) {
-        ESP_LOGI(TAG, "Shared BSP I2C bus ready and PMU registered.");
-        
         if (pmu_init() == ESP_OK) {
             xTaskCreate(pmu_hander_task, "App/pwr", 4 * 1024, NULL, 10, NULL);
         } else {
