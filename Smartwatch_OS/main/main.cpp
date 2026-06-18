@@ -17,19 +17,25 @@ extern "C" {
 
 #define TAG "main"
 
-// Confirmed hardware I2C pins for the Waveshare ESP32-S3-Touch-AMOLED-2.06 watch
-#define I2C_PMU_SDA_IO     15
-#define I2C_PMU_SCL_IO     14
-#define I2C_MASTER_FREQ_HZ 100000 
+// Corrected hardware I2C pins for the Waveshare ESP32-S3-Touch-AMOLED-2.06 PMU/Sensors
+#define I2C_PMU_SDA_IO     4
+#define I2C_PMU_SCL_IO     5
+#define I2C_MASTER_FREQ_HZ 400000 
 #define I2C_MASTER_TIMEOUT_MS 50 
 
+static i2c_master_bus_handle_t pmu_bus_handle = NULL;
 static i2c_master_dev_handle_t pmu_dev_handle = NULL;
+static uint8_t active_pmu_addr = 0;
 
 extern "C" {
     float battery_percentage = 0.0f;
     float battery_voltage = 0.0f;
     bool battery_present = false;
     bool battery_charging = false;
+
+    uint8_t get_pmu_address() {
+        return active_pmu_addr;
+    }
 }
 
 // Function declarations from port_axp2101.cpp
@@ -58,29 +64,44 @@ void i2c_clear_bus() {
     }
 }
 
-// Initialize I2C utilizing the BSP bus architecture
+// Initialize I2C independently from the BSP (since BSP manages the Touch I2C on pins 14/15)
 esp_err_t i2c_init() {
-    esp_err_t ret = bsp_i2c_init(); 
-    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
-        ESP_LOGE(TAG, "bsp_i2c_init failed! Err: %s", esp_err_to_name(ret));
+    i2c_master_bus_config_t bus_cfg = {};
+    bus_cfg.i2c_port = -1;
+    bus_cfg.sda_io_num = (gpio_num_t)I2C_PMU_SDA_IO;
+    bus_cfg.scl_io_num = (gpio_num_t)I2C_PMU_SCL_IO;
+    bus_cfg.clk_source = I2C_CLK_SRC_DEFAULT;
+    bus_cfg.glitch_ignore_cnt = 7;
+    bus_cfg.flags.enable_internal_pullup = 1;
+
+    esp_err_t ret = i2c_new_master_bus(&bus_cfg, &pmu_bus_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to create PMU I2C bus!");
         return ret;
     }
 
-    i2c_master_bus_handle_t bsp_bus = bsp_i2c_get_handle();
-    if (bsp_bus == NULL) {
-        ESP_LOGE(TAG, "Failed to retrieve BSP I2C master bus!");
+    // Safely probe to find exact PMU address
+    if (i2c_master_probe(pmu_bus_handle, 0x6A, 50) == ESP_OK) {
+        active_pmu_addr = 0x6A; // SY6970 (V2.0.0 hardware)
+    } else if (i2c_master_probe(pmu_bus_handle, 0x34, 50) == ESP_OK) {
+        active_pmu_addr = 0x34; // AXP2101 (V1.0.0 hardware)
+    }
+
+    if (active_pmu_addr == 0) {
+        ESP_LOGE(TAG, "PMU not found on I2C bus!");
         return ESP_FAIL;
     }
 
-    // Register 0x6B (SY6970 Standard Address from your log) directly to avoid i2c_master_probe crash
+    ESP_LOGI(TAG, "Found PMU at I2C address 0x%02X", active_pmu_addr);
+
     i2c_device_config_t dev_cfg = {};
     dev_cfg.dev_addr_length = I2C_ADDR_BIT_LEN_7;
-    dev_cfg.device_address = 0x6B; 
+    dev_cfg.device_address = active_pmu_addr; 
     dev_cfg.scl_speed_hz = I2C_MASTER_FREQ_HZ;
     dev_cfg.scl_wait_us = 0;
     dev_cfg.flags.disable_ack_check = 0;
 
-    ret = i2c_master_bus_add_device(bsp_bus, &dev_cfg, &pmu_dev_handle);
+    ret = i2c_master_bus_add_device(pmu_bus_handle, &dev_cfg, &pmu_dev_handle);
     return ret;
 }
 
@@ -92,7 +113,7 @@ int pmu_register_read(uint8_t devAddr, uint8_t regAddr, uint8_t *data, uint8_t l
     }
 
     // Spoof Chip ID for SY6970 (REG 0x14) to bypass library strict checks
-    if (regAddr == 0x14 && len == 1) {
+    if (active_pmu_addr == 0x6A && regAddr == 0x14 && len == 1) {
         *data = 0x00; // Expected ID value
     }
 
@@ -130,17 +151,12 @@ extern "C" void app_main(void) {
     // 1. Enforce pull-ups and clear bus BEFORE any other drivers initialize
     i2c_clear_bus();
 
-    // 2. Initialize display and UI (this configures the shared display I2C bus)
+    // 2. Initialize display and UI (this configures the shared display I2C bus on GPIO 14/15)
     bsp_display_start();
     bsp_display_backlight_on();
     build_ui();
 
-    // 3. FORCE internal pull-ups on GPIO 15 and 14 after the BSP display driver overrides them!
-    gpio_set_pull_mode((gpio_num_t)I2C_PMU_SDA_IO, GPIO_PULLUP_ONLY);
-    gpio_set_pull_mode((gpio_num_t)I2C_PMU_SCL_IO, GPIO_PULLUP_ONLY);
-    vTaskDelay(pdMS_TO_TICKS(100)); // Allow lines to rise to VCC
-
-    // 4. Connect to the shared I2C bus and init PMU
+    // 3. Connect to the sensor I2C bus and init PMU on GPIO 4/5
     if (i2c_init() == ESP_OK) {
         if (pmu_init() == ESP_OK) {
             xTaskCreate(pmu_hander_task, "App/pwr", 4 * 1024, NULL, 10, NULL);
