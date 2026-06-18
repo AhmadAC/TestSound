@@ -5,7 +5,7 @@
 #include "esp_log.h"
 #include "esp_err.h"
 
-// Include the XPowers library (It will default to SY6970 since AXP isn't forced)
+// Include the XPowers library (Defaults to SY6970 on V2.0.0 hardware)
 #include "XPowersLib.h"
 
 static const char *TAG = "SY6970";
@@ -24,18 +24,11 @@ extern "C" {
 
 esp_err_t pmu_init()
 {
-    bool init_success = false;
-
-    // V2.0.0 boards use SY6970, which resides at either 0x6B or 0x6A
+    // We use 0x6B as the dummy address since pmu_register_read automatically routes
+    // to the active device handle mapped in main.cpp
     if (PMU.begin(0x6B, pmu_register_read, pmu_register_write_byte)) {
-        ESP_LOGI(TAG, "SY6970 PMU initialized successfully at 0x6B!");
-        init_success = true;
-    } else if (PMU.begin(0x6A, pmu_register_read, pmu_register_write_byte)) {
-        ESP_LOGI(TAG, "SY6970 PMU initialized successfully at 0x6A!");
-        init_success = true;
-    }
-
-    if (!init_success) {
+        ESP_LOGI(TAG, "SY6970 PMU initialized successfully!");
+    } else {
         ESP_LOGE(TAG, "Failed to communicate with SY6970 PMU!");
         return ESP_FAIL;
     }
