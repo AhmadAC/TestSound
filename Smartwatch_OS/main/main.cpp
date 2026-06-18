@@ -92,15 +92,11 @@ esp_err_t i2c_init() {
 int pmu_register_read(uint8_t devAddr, uint8_t regAddr, uint8_t *data, uint8_t len) {
     if (pmu_dev_handle == NULL) return -1;
 
-    // Read the real data from the PMU first
-    uint8_t temp_buf[16] = {0};
-    esp_err_t ret = i2c_master_transmit_receive(pmu_dev_handle, &regAddr, 1, temp_buf, len, I2C_MASTER_TIMEOUT_MS);
+    esp_err_t ret = i2c_master_transmit_receive(pmu_dev_handle, &regAddr, 1, data, len, I2C_MASTER_TIMEOUT_MS);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "PMU I2C Read Reg 0x%02X Failed! Err: %s", regAddr, esp_err_to_name(ret));
         return -1;
     }
-
-    memcpy(data, temp_buf, len);
 
     // SPOOF the Chip ID register to bypass the library's strict check on custom hardware
     if (regAddr == 0x03 && len == 1) {
