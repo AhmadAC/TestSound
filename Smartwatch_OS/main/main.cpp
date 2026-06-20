@@ -62,6 +62,10 @@ void i2c_clear_bus() {
         gpio_set_level((gpio_num_t)I2C_PMU_SCL_IO, 1);
         vTaskDelay(pdMS_TO_TICKS(2));
     }
+    
+    // Reset pins so the I2C driver can take over cleanly without triggering pull-up warnings
+    gpio_reset_pin((gpio_num_t)I2C_PMU_SDA_IO);
+    gpio_reset_pin((gpio_num_t)I2C_PMU_SCL_IO);
 }
 
 // Initialize I2C independently from the BSP (since BSP manages the Touch I2C on pins 14/15)
@@ -154,7 +158,11 @@ extern "C" void app_main(void) {
     // 2. Initialize display and UI (this configures the shared display I2C bus on GPIO 14/15)
     bsp_display_start();
     bsp_display_backlight_on();
+    
+    // Lock LVGL before building UI to prevent data corruption/watchdog timeout
+    bsp_display_lock(0);
     build_ui();
+    bsp_display_unlock();
 
     // 3. Connect to the sensor I2C bus and init PMU on GPIO 4/5
     if (i2c_init() == ESP_OK) {
