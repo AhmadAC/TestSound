@@ -17,9 +17,9 @@ extern "C" {
 
 #define TAG "main"
 
-// Corrected hardware I2C pins for the Waveshare ESP32-S3-Touch-AMOLED-2.06 PMU/Sensors
-#define I2C_PMU_SDA_IO     4
-#define I2C_PMU_SCL_IO     5
+// Corrected physical I2C pins for the Waveshare ESP32-S3-Touch-AMOLED-2.06 shared bus
+#define I2C_PMU_SDA_IO     15
+#define I2C_PMU_SCL_IO     14
 #define I2C_MASTER_FREQ_HZ 400000 
 #define I2C_MASTER_TIMEOUT_MS 50 
 
@@ -63,28 +63,31 @@ void i2c_clear_bus() {
         vTaskDelay(pdMS_TO_TICKS(2));
     }
     
-    // Reset pins so the I2C driver can take over cleanly without triggering pull-up warnings
+    // Reset pins so the standard I2C driver can take over cleanly
     gpio_reset_pin((gpio_num_t)I2C_PMU_SDA_IO);
     gpio_reset_pin((gpio_num_t)I2C_PMU_SCL_IO);
 }
 
-// Initialize I2C independently from the BSP (since BSP manages the Touch I2C on pins 14/15)
+// Initialize I2C by retrieving the shared bus handle from BSP
 esp_err_t i2c_init() {
-    i2c_master_bus_config_t bus_cfg = {};
-    bus_cfg.i2c_port = -1;
-    bus_cfg.sda_io_num = (gpio_num_t)I2C_PMU_SDA_IO;
-    bus_cfg.scl_io_num = (gpio_num_t)I2C_PMU_SCL_IO;
-    bus_cfg.clk_source = I2C_CLK_SRC_DEFAULT;
-    bus_cfg.glitch_ignore_cnt = 7;
-    bus_cfg.flags.enable_internal_pullup = 1;
-
-    esp_err_t ret = i2c_new_master_bus(&bus_cfg, &pmu_bus_handle);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to create PMU I2C bus!");
-        return ret;
+    // Retrieve the active I2C master bus handle already initialized by the display BSP
+    pmu_bus_handle = bsp_i2c_get_handle();
+    if (pmu_bus_handle == NULL) {
+        ESP_LOGW(TAG, "BSP I2C bus not yet initialized. Initializing it manually...");
+        esp_err_t ret = bsp_i2c_init();
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to initialize BSP I2C bus!");
+            return ret;
+        }
+        pmu_bus_handle = bsp_i2c_get_handle();
     }
 
-    // Safely probe to find exact PMU address
+    if (pmu_bus_handle == NULL) {
+        ESP_LOGE(TAG, "Failed to retrieve valid BSP I2C bus handle!");
+        return ESP_FAIL;
+    }
+
+    // Safely probe the shared bus to find the exact PMU address
     if (i2c_master_probe(pmu_bus_handle, 0x6A, 50) == ESP_OK) {
         active_pmu_addr = 0x6A; // SY6970 (V2.0.0 hardware)
     } else if (i2c_master_probe(pmu_bus_handle, 0x34, 50) == ESP_OK) {
@@ -105,7 +108,7 @@ esp_err_t i2c_init() {
     dev_cfg.scl_wait_us = 0;
     dev_cfg.flags.disable_ack_check = 0;
 
-    ret = i2c_master_bus_add_device(pmu_bus_handle, &dev_cfg, &pmu_dev_handle);
+    esp_err_t ret = i2c_master_bus_add_device(pmu_bus_handle, &dev_cfg, &pmu_dev_handle);
     return ret;
 }
 
@@ -164,7 +167,7 @@ extern "C" void app_main(void) {
     build_ui();
     bsp_display_unlock();
 
-    // 3. Connect to the sensor I2C bus and init PMU on GPIO 4/5
+    // 3. Connect to the sensor I2C bus and init PMU on GPIO 14/15
     if (i2c_init() == ESP_OK) {
         if (pmu_init() == ESP_OK) {
             xTaskCreate(pmu_hander_task, "App/pwr", 4 * 1024, NULL, 10, NULL);
