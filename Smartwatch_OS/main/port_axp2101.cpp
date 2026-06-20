@@ -42,11 +42,14 @@ esp_err_t pmu_init()
         if (PMU_AXP.begin(0x34, pmu_register_read, pmu_register_write_byte)) {
             ESP_LOGI(TAG, "AXP2101 PMU initialized successfully!");
             
-            // Enable active battery detection
-            PMU_AXP.enableBattDetection();
+            // Explicitly enable Cell Battery Charger & E-Gauge (Fuel Gauge)
+            PMU_AXP.writeRegister(XPOWERS_AXP2101_CHARGE_GAUGE_WDT_CTRL, 0x0A);
             
-            // Enable battery, VBUS, and System ADCs directly to ensure they stick
-            PMU_AXP.writeRegister(XPOWERS_AXP2101_ADC_CHANNEL_CTRL, 0x3D);
+            // Enable all ADC channels (VBAT, VBUS, VSYS, TS, Tdie, and GPADC)
+            PMU_AXP.writeRegister(XPOWERS_AXP2101_ADC_CHANNEL_CTRL, 0x3F);
+            
+            // Enable active hardware battery presence detection
+            PMU_AXP.writeRegister(XPOWERS_AXP2101_BAT_DET_CTRL, 0x01);
             
             return ESP_OK;
         }
