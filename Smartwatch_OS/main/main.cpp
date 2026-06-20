@@ -20,7 +20,7 @@ extern "C" {
 // Corrected physical I2C pins for the Waveshare ESP32-S3-Touch-AMOLED-2.06 shared bus
 #define I2C_PMU_SDA_IO     15
 #define I2C_PMU_SCL_IO     14
-#define I2C_MASTER_FREQ_HZ 400000 
+#define I2C_MASTER_FREQ_HZ 100000 // Reduced to 100kHz for reliable communication over weak pull-ups
 #define I2C_MASTER_TIMEOUT_MS 50 
 
 static i2c_master_bus_handle_t pmu_bus_handle = NULL;
@@ -115,7 +115,9 @@ esp_err_t i2c_init() {
 int pmu_register_read(uint8_t devAddr, uint8_t regAddr, uint8_t *data, uint8_t len) {
     if (pmu_dev_handle == NULL) return -1;
     
-    if (i2c_master_transmit_receive(pmu_dev_handle, &regAddr, 1, data, len, I2C_MASTER_TIMEOUT_MS) != ESP_OK) {
+    esp_err_t err = i2c_master_transmit_receive(pmu_dev_handle, &regAddr, 1, data, len, I2C_MASTER_TIMEOUT_MS);
+    if (err != ESP_OK) {
+        ESP_LOGE("pmu_i2c", "Read reg 0x%02X failed: %s", regAddr, esp_err_to_name(err));
         return -1;
     }
 
@@ -124,6 +126,12 @@ int pmu_register_read(uint8_t devAddr, uint8_t regAddr, uint8_t *data, uint8_t l
         *data = 0x00; // Expected ID value
     }
 
+    // Spoof Chip ID for AXP2101 (REG 0x03) to bypass library strict checks (e.g. if it is a TG28 or custom variant)
+    if (active_pmu_addr == 0x34 && regAddr == 0x03 && len == 1) {
+        *data = 0x4A; // Expected AXP2101 ID value
+    }
+
+    ESP_LOGI("pmu_i2c", "Read reg 0x%02X -> 0x%02X", regAddr, *data);
     return 0;
 }
 
@@ -136,11 +144,15 @@ int pmu_register_write_byte(uint8_t devAddr, uint8_t regAddr, uint8_t *data, uin
     memcpy(&buffer[1], data, len);
 
     esp_err_t ret = i2c_master_transmit(pmu_dev_handle, buffer, len + 1, I2C_MASTER_TIMEOUT_MS);
-    free(buffer);
-
+    
     if (ret != ESP_OK) {
+        ESP_LOGE("pmu_i2c", "Write reg 0x%02X failed: %s", regAddr, esp_err_to_name(ret));
+        free(buffer);
         return -1;
     }
+    
+    ESP_LOGI("pmu_i2c", "Write reg 0x%02X <- 0x%02X", regAddr, *data);
+    free(buffer);
     return 0;
 }
 
