@@ -42,14 +42,13 @@ esp_err_t pmu_init()
         if (PMU_AXP.begin(0x34, pmu_register_read, pmu_register_write_byte)) {
             ESP_LOGI(TAG, "AXP2101 PMU initialized successfully!");
             
-            // Explicitly enable Cell Battery Charger & E-Gauge (Fuel Gauge)
-            PMU_AXP.writeRegister(XPOWERS_AXP2101_CHARGE_GAUGE_WDT_CTRL, 0x0A);
-            
-            // Enable all ADC channels (VBAT, VBUS, VSYS, TS, Tdie, and GPADC)
-            PMU_AXP.writeRegister(XPOWERS_AXP2101_ADC_CHANNEL_CTRL, 0x3F);
-            
-            // Enable active hardware battery presence detection
-            PMU_AXP.writeRegister(XPOWERS_AXP2101_BAT_DET_CTRL, 0x01);
+            // Apply standard M5Unified/Tasmota AXP2101 register configurations:
+            PMU_AXP.writeRegister(0x10, 0x30); // PMU common config (internal off-discharge enable)
+            PMU_AXP.writeRegister(0x12, 0x00); // Ensure BATFET (battery switch) is enabled and active
+            PMU_AXP.writeRegister(0x18, 0x0A); // Enable Gauge and Cell Battery Charger
+            PMU_AXP.writeRegister(0x50, 0x00); // Disable TS pin pull-ups & current source (clears floating temp sensor fault)
+            PMU_AXP.writeRegister(0x30, 0x3D); // Enable ADCs (keep TS pin measure disabled to bypass fault)
+            PMU_AXP.writeRegister(0x68, 0x01); // Enable active battery presence detection
             
             return ESP_OK;
         }
